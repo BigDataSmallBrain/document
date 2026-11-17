@@ -13,7 +13,20 @@ flowchart LR
     RPI --> API
     RPI --> Web
 ```
+##
+### <u> Sécurité </u>
+Une attention particulière à été prêter à la sécurité de cette architecture en respectant au mieux la règle suivante: <br>
+"C'est le système sécurisé qui se connecte au système vulnérable et non l'inverse." <br>
+A ces fins, le cluster se connecte via SFTP sur le raspberry pi en utilisant le serveur AWS (ouverture du port 22 avec filtre sur le AWS avec controle des IPs pour ne laisser passer que le cluster, puis tailscale entre AWS et le pi).
+Le cluster sait donc se connecter successivement a l'AWS et au raspberry avec des connexions ssh, mais ni AWS ni le raspberry ne sont en mesure de se connecter au cluster.
 
+Lors de cette connexion SFTP, le cluster ne peut lire que dans `input` et déposer ses metrics et poids dans `output`, de ce fait, il ne peut pas acceder au reste des données du raspberry, ce qui rajoute un controle supplémentaire sur les accès.
+
+Un transfert des poids était également necessaire entre le Cluster et le Serveur API. [Inserer ici comment cela à été réaliser].
+
+Enfin pour l'utilisation de l'API [Inserer ici comment cela à été réaliser].
+
+##
 # Base de données
 | Column | Type | Nullable | Default | Storage |
 | :--- | :--- | :--- | :--- | :--- |
@@ -37,6 +50,7 @@ flowchart LR
 Base de données sauvegardé tout les samedis à 0h00. <br>
 Seuls les 3 dernières sauvegardes sont conservés, ce qui fait un historique de 3 semaines.
 
+##
 # Scrapping
 Nous utilisons l'API de GitHub afin de pouvoir récuperer des repositories correspondants à nos critères:
 - README d'au moins 100 caractères
@@ -66,6 +80,14 @@ Les repos déjà présents sont mis à jour lorsqu'ils sont récuperer à nouvea
 
 L'objectif lors de cette récupération, est de collecté un maximum de données, faisant alors abstraction du nombres d'étoiles, car cela pourrait avoir son utilité à l'avenir.
 
+Egalement, l'API de GitHub impose un nombre limité de requête par heure, et si ce nombre est dépasser, ou que trop de requête sont envoyés en un laps de temps très court, des avertissements commencent à être émits, pouvant amener à une suspension du compte.<br>
+Pour eviter ce problème, il a été mis en place:
+- **Un limiteur de débit à fenêtre glissante**, partagé entre tous les threads, qui plafonne le script à 1500 requêtes par minute, soit sous les 2000 points par minute autorisés par GitHub.
+- **Une marge de sécurité sur le quota horaire** : à chaque réponse, le script lit le quota restant. Lorsqu'il passe sous un seuil (1600 points), la collecte est suspendue, puis reprend automatiquement après la réinitialisation du quota (`resetAt`) communiquée par GitHub.
+- **Une gestion des erreurs avec temporisation** : si GitHub signale tout de même une limite secondaire, le script attend le délai demandé par l'API (en-tête `Retry-After`, sinon heure de reset, sinon pause croissante de 60 s, 120 s, etc.) avant de réessayer. Les erreurs réseau et serveur (502, 503, 504, timeout) sont retentées jusqu'à 5 fois avec une attente doublée à chaque tentative.
+
+Ces différentes mesures lors du scrapping permettent ainsi une collecte efficace, tout en respectant les conditions d'utilisation de GitHub.
+
 ##
 ### <u>Découpage:</u>
 
@@ -85,15 +107,17 @@ Ensuite, lorsque nous avons collecter une grosse quantités de données (Environ
 Nous stoppons la récuperation les Week-end, car c'est à ce moment que s'effectue la sauvegarde de la base de données et les entrainements.
 
 # Entrainement
-## Données
+## <u>Données </u>
 Sélections des repos ayant plus de X etoiles et X caractères dans ReadMe.<br>
 Les données qui (voir quels données sont séléctionner) sont déposer dans un espace prévu à cet effet tout les samedi à 3h00.
 
 Le samedi à 6h00, le cluster se connecte sur le Raspberry PI, dans l'espace SFTP, afin de récuperer les données alors déposés pour faire son entrainement.
 
-## Entrainement
-L'entrainement est alors inité tout les samedis à 6h00 via un Cron. Il execute le fichier batch prévu à cet effet afin de pouvoir s'allouer un espace sur la node GPUE-07 avec 1 gpu, 8 cpu et 48G de ram. Le script est prévu de tourner 6h au maximum.<br> 
+## <u>Entrainement</u>
+L'entrainement est alors inité tout les samedis à 6h00 via un Cron. Il execute le fichier batch prévu à cet effet afin de pouvoir s'allouer un espace sur la node GPUE-07 avec 1 gpu, 8 cpu et 48G de ram. Le script est prévu de tourner 6h au maximum.<br>
+L'entrainement s'effectue alors avec le même jeu de donnée sur tous les modèles de notre pool models. Une fois l'entrainement effecuté, nous calculons les métriques de nos modèles que nous redéposons sur le 
 
+## <u>Jeu de validation</u>
 
 
 # Models
@@ -119,7 +143,7 @@ L'entrainement est alors inité tout les samedis à 6h00 via un Cron. Il execute
 - **Point fort :** Excellentes performances sur les benchmarks de recherche (MTEB) sans sacrifier l'anglais, avec support Matryoshka (MRL) permettant de compresser les vecteurs jusqu'à 256 dimensions sans perte notable.
 
 ##
-### <u>google/embeddinggemma-300m</u>
+### <u>google/embeddinggemma-300m</u> [Actuellement en cours d'étude pour implémentation]
 - **Paramètres :** ~300M (768 dimensions)
 - **Langues supportées :** Plus de 100 langues
 - **Contexte max :** 2 048 tokens
@@ -153,10 +177,31 @@ L'entrainement est alors inité tout les samedis à 6h00 via un Cron. Il execute
 - **Contexte max :** 32 768 tokens
 - **Point fort :** Fenêtre de contexte massive (32k) et support des instructions personnalisées sur les requêtes (*instruction-aware*), offrant une précision de pointe sur les textes techniques, le code et les documents très longs.
 
+##
+### <u>intfloat/multilingual-e5-large-instruct</u>
+- **Paramètres :** 560M (1 024 dimensions)
+- **Langues supportées :** 100 langues (basé sur XLM-RoBERTa-large)
+- **Contexte max :** 512 tokens
+- **Point fort :** Version *instruction-tuned* la plus puissante de la famille E5 : le préfixe d'instruction sur la requête permet d'adapter finement la recherche au domaine visé (ici, la documentation de dépôts logiciels) avec une excellente précision sémantique.
 
+##
+### <u>ibm-granite/granite-embedding-278m-multilingual</u>
+- **Paramètres :** 278M (768 dimensions)
+- **Langues supportées :** Plus de 100 langues (dont 12 langues entraînées intensivement)
+- **Contexte max :** 512 tokens
+- **Point fort :** Modèle entreprise ultra-propre (licence Apache 2.0, sans code distant `trust_remote_code`), très rapide à l'inférence et spécialement optimisé pour le retrieval technique et documentaire.
+
+##
+### <u>jinaai/jina-embeddings-v3</u>
+- **Paramètres :** 570M (1 024 dimensions)
+- **Langues supportées :** 89 langues (plus principaux langages de programmation)
+- **Contexte max :** 8 192 tokens
+- **Point fort :** Utilise des adaptateurs LoRA spécialisés par tâche (retrieval, clustering, classification) et le support Matryoshka (MRL de 32 à 1 024 dimensions), offrant d'excellentes performances sur le mélange de texte naturel et de code informatique.
+
+##
 # Metrics & Méthodes :
 
-## Méthodes:
+## <u>Méthodes:</u>
 
 ### <u>BM25 :</u>
 
@@ -196,7 +241,7 @@ __Caractéristiques :__
 
 ##
 
-## Metrics
+## <u>Metrics</u>
 
 ### <u>Recall@10 (Rappel à 10)</u>
 
@@ -229,3 +274,37 @@ __Caractéristiques :__
 - Gère la pertinence graduée (ex: pas pertinent = 0, moyen = 1, très pertinent = 2)
 - Récompense fortement les meilleurs résultats placés tout en haut (rang 1, 2, 3)
 - Standard industriel pour évaluer les moteurs de recherche et les modèles de Reranking
+##
+# Difficultés:
+### <u>Matériel </u>
+L'une des principales difficulté qui à été identifié concerne le materiel. En effet, dans un premier temps j'ai commencer par utiliser un serveur AWS classique (version d'essais avec X credits). Cependant, je me suis vite rendu compte que je commencais à subir un problème d'espace de stockage (30 Go) et de puissance de calcul (2 Go de Ram et 0 GPU).<br>
+Or, si je souhaitais augmenter la puissance et l'espace que j'avais alors à disposition, il me fallait augmenter la consommation de credits (car plus gros forfait), mais après un rapide calcul en cout de credit par jour, il est apparu que je n'aurais pas assez de crédits pour tenir sur l'intégralité du temps de projet.
+
+C'est pourquoi, je me suis tourné vers une solution local. Ayant alors un raspberry pi avec 4 Go de RAM inutilisé ainsi qu'un SSD de 2 To, j'ai remplacé le serveur AWS qui me limitait par une solution alternative, car le projet necessitait de tourner de manière continue, ce qui n'aurait pas été possible sur le cluster universitaire ni sur mon ordinateur fixe personnel.
+
+Cependant, malgré le fait que le problème de stockage ai été résolu, il demeurait encore le problème de la puissance, car le raspberry pi ne pouvait simultanément s'occuper de l'entrainement (CPU/GPU + RAM), de l'inférence (GPU/CPU + RAM), de l'hebergement du site (CPU + RAM) et du scrapping (CPU + RAM).
+
+Il a donc été necessaire de répartir ces différentes tâches dans différentes structures étant capable de les encaisser:
+- Raspberry : Site + Scrapping (peu couteux en RAM).
+- Cluster : Entrainement (Présence de puissant GPU et d'une forte capacité de calcul)
+- Serveur Tiers : Inférence lors du Retrival (Puissance de calcul moyenne)
+- AWS : Il ne sert que de pont de connexion entre le Cluster et le raspberry, car ne souhaitant pas exposé le port 22 de ma box personelle, et le Cluster ayant une plage de diffusion réduite.
+
+Ainsi, les différentes tâches seraient traités par différents systèmes aux capacités différentes.
+
+### <u>Sécurité</u>
+Cependant, ce choix d'utiliser plusieurs structures pour effecuter le projet, bien que résolvant le problème initial de puissance, à également apporté un nouveau problème : la sécurité.
+Effectivement, qui dit plus de point d'entrée, dit plus de faille possible. Ce qui est un gros problème si l'on sait que le Cluster ici est un cluster de calcul universitaire, et que le serveur tiers m'a été gracieusement mis à disposition pour mon API (Merci Mewen).
+
+Il a donc été nécessaire de mettre en place des mesures de sécurités pour s'assurer que tout se déroule correctement. Ainsi, comme évoquer précédemment au point `Architecture`, il a été decider que le cluster se connecterais de lui même au raspberry pi, et que rien ne pourrait se connecter au Cluster. De ce fait, même si mon raspberry venait à être compromis, le cluster n'en serait pas inquiété.
+
+Toutes les connexions se feraient via des protocoles sécurisés (Tailscale, SFTP, WireGuard), et chaque connexion à mon raspberry pi était alors loggé et fournit dans un rapport matinal sur mon téléphone via `ntfy`, indiquant les clés ssh utilisés pour se connectés, le nombre de connexions effectués et les commandes sudo qui ont été utilisés.<br>
+Ce rapport, bien que informatif, me permet alors d'avoir un suivi complet de ce qu'il se passe sur le raspberry.
+##
+# Points à améliorer:
+Voici une liste des points à améliorer que j'ai relevé durant mon projet:
+- Manque de redondance des tâches : Si un de système viens à cesser de fonctionner, il n'y a rien pour le fallback.
+- Manque de redondance des données : Toutes les données sont présentes uniquement sur le raspberry, si il casse, je perds tout.
+- Simplifié l'architecture : Cela se réfère également au premier point, mais bien que cela puisse être interessant d'avoir une architecture complexe pour un projet universitaire, dans un cadre pratique réel, on va préféré la simplicité.
+
+En définitive, les principaux points à améliorer sont inhérent aux choix de conceptions de l'architecture qui ont été fait.
