@@ -18,6 +18,8 @@ L'objectif de concevoir un outils de Retrival basé sur les ReadMe de GitHub. So
 - Les entrainements doivent être effectué de manières automatiques.
 - Plusieurs modèles doivent être mis en place (MLOps).
 
+### <u>Git</u>
+- https://github.com/BigDataSmallBrain
 ---
 # Architecture
 
@@ -29,11 +31,31 @@ flowchart LR
     API["Serveur<br/>(API pour Retrieval)"]
     Web["Site Web"]
 
-    Cluster --> AWS
-    AWS --> RPI
-    RPI --> API
-    RPI --> Web
+    Cluster -->|X| AWS
+    AWS -->|X| RPI
+    RPI -->|Fast-API| API
+    RPI -->|X| Web
+    AWS -->|WireGuard| API
 ```
+---
+
+### <u>Architecture API:</u> [A mettre en place]
+
+**Système bi-conteneur:**
+- API
+- - Port Public 35000
+- - DuckDNS (register un domain et envoyer token a Mewen)
+- - 8 coeurs, 32Go RAM, GPU, 50Go (bien liberer les ressources hors stockage a la fin d'un appel API)
+
+- SSH
+- - Only key
+- - Rsync plutot que SCP
+
+Dossier en commun entre API et SSH pour le depot des models<br>
+Acces WireGuard pour parler avec uniquement avec le conteneur SSH.<br>
+- Cluster> SFTP > AWS > Wireguard(SSH) > SSH > Depot dans dossier communs
+Attention:
+- Faire attention à la configuration car Internet sera potentiellement bloqué.
 ---
 ### <u> Sécurité </u>
 Une attention particulière à été prêter à la sécurité de cette architecture en respectant au mieux la règle suivante: <br>
@@ -49,6 +71,14 @@ Enfin pour l'utilisation de l'API [Inserer ici comment cela à été réaliser].
 
 ---
 # Base de données
+Nous avons deux bases de données type PSQL sur le raspberry pour la conservation de nos données:
+- Repos : Contient les repos alimenter par notre scrapping
+- model_evaluations : Contient les métriques hébdomadaire par runs et par models.
+
+Ces bases de données sont alors sauvegardé tout les samedis à 0h00. <br>
+Seuls les 3 dernières sauvegardes sont conservés, ce qui fait un historique de 3 semaines.
+
+## Repos
 | Column | Type | Nullable | Default | Storage |
 | :--- | :--- | :--- | :--- | :--- |
 | id | bigint | not null | `nextval('repos_id_seq'::regclass)` | plain |
@@ -68,8 +98,37 @@ Enfin pour l'utilisation de l'API [Inserer ici comment cela à été réaliser].
 | archived | integer | | | plain |
 | last_fetched_at | text | | | extended |
 
-Base de données sauvegardé tout les samedis à 0h00. <br>
-Seuls les 3 dernières sauvegardes sont conservés, ce qui fait un historique de 3 semaines.
+## Model Evaluations
+Conserve l'historique hebdomadaire des évaluations de recherche par modèle et par run.<br>
+- Mode Append-Only : Il est uniquement possible de rajouter des données, impossible de les modifier ou les ecrasers.
+- Unicité : Les contraintes d'unicités empêche l'insertion des doublons dans la base.
+- Entrée des donneés : L'ingestion est déclenchée chaque dimanche à 12hOO via le timer systemd `importer.timer` exécutant le service `importer.service` pour alimenter la base de données, les fichiers d'abord contenue dans `inbox` sont alors traités puis deplacer dans le dossier `processed`.<br>
+<br>
+
+| Colonne | Type PostgreSQL | Contraintes | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `BIGSERIAL` | `PRIMARY KEY` | Identifiant des metriques |
+| `run_id` | `TEXT` | `NOT NULL UNIQUE` | Identifiant unique du run (ex. `2026-W46-gemma`) |
+| `source_file` | `TEXT` | `NOT NULL UNIQUE` | Nom du fichier JSON de metriques traités |
+| `run_date` | `TIMESTAMPTZ` | `NOT NULL` | Horodatage de fin d'exécution (`finished_at`, sinon `started_at`) |
+| `embedding_dim` | `INTEGER` | | Dimension des vecteurs générés |
+| `validation_set_version` | `TEXT` | | Version du jeu de validation utilisé |
+| `corpus` | `TEXT` | | Périmètre du corpus évalué |
+| `n_queries_evaluated` | `INTEGER` | | Nombre de requêtes évaluées sur le jeu de test |
+| `duration_seconds` | `DOUBLE PRECISION` | | Durée totale d'exécution/entraînement sur le cluster (en secondes) |
+| `bm25_recall_at_10` | `DOUBLE PRECISION` | | Score Recall@10 - recherche lexicale BM25 |
+| `bm25_mrr` | `DOUBLE PRECISION` | | Score MRR - recherche lexicale BM25 |
+| `bm25_ndcg_at_10` | `DOUBLE PRECISION` | | Score nDCG@10 - recherche lexicale BM25 |
+| `e5_recall_at_10` | `DOUBLE PRECISION` | | Score Recall@10 - recherche dense (embeddings) |
+| `e5_mrr` | `DOUBLE PRECISION` | | Score MRR - recherche dense (embeddings) |
+| `e5_ndcg_at_10` | `DOUBLE PRECISION` | | Score nDCG@10 - recherche dense (embeddings) |
+| `rrf_recall_at_10` | `DOUBLE PRECISION` | | Score Recall@10 - fusion hybride (*Reciprocal Rank Fusion*) |
+| `rrf_mrr` | `DOUBLE PRECISION` | | Score MRR - fusion hybride (*Reciprocal Rank Fusion*) |
+| `rrf_ndcg_at_10` | `DOUBLE PRECISION` | | Score nDCG@10 - fusion hybride (*Reciprocal Rank Fusion*) |
+| `details` | `JSONB` | `NOT NULL DEFAULT '{}'` | Métriques détaillés : scores par tranche (`by_size`), intervalles de confiance (`ci95`) et tests appariés (`paired_diff`) |
+
+<br>
+
 
 ---
 # Scrapping
@@ -135,7 +194,7 @@ Les données qui (voir quels données sont séléctionner) sont déposer dans un
 Le samedi à 6h00, le cluster se connecte sur le Raspberry PI, dans l'espace SFTP, afin de récuperer les données alors déposés pour faire son entrainement.
 
 ### <u>Entrainement</u>
-L'entrainement est alors inité tout les samedis à 6h00 via un Cron. Il execute le fichier batch prévu à cet effet afin de pouvoir s'allouer un espace sur la node GPUE-07 avec 1 gpu, 8 cpu et 48G de ram. Le script est prévu de tourner 6h au maximum.<br>
+L'entrainement est alors inité tout les dimanches à 0h00 via un Cron. Il execute le fichier batch prévu à cet effet afin de pouvoir s'allouer un espace sur la node GPUE-07 avec 1 gpu, 8 cpu et 48G de ram. Le script est prévu de tourner 12h au maximum. L'entrainement est prévu de prendre environ 8h, afin de ne pas monopoliser le cluster, il a été decider de le faire tourner entre 0h00 et 12h.<br>
 L'entrainement s'effectue alors avec le même jeu de donnée sur tous les modèles de notre pool models. Une fois l'entrainement effecuté, nous calculons les métriques de nos modèles que nous redéposons sur le 
 
 ### <u>Jeu de validation</u>
@@ -151,18 +210,31 @@ Les requêtes sont prelevés de requête type qui pourrait être utiliser par un
 ### <u>Evaluation</u>
 Les modèles sont donc evaluer à partir des métriques présenter ci-dessous. Les modèles les plus performants *(ceux qui nous fournissent les résultats les plus pertinents sur les 10 premiers retours)*, sont donc transferer sur le Serveur API afin de pouvoir les mettrent à disposition des utilisateurs.<br>
 Les modèles, à l'image de la base de données, seront donc sauvegarder pendant 3 semaines, ce qui permet d'avoir un suivis de nos performances, mais également de pouvoir recharger un ancien modèle au besoin.<br>
-Tout les modèles sont conserver, ainsi, il sera parfaitement possible de mettre à disposition plus de modèles sans avoir à les entrainer de nouveaux.
+Tout les modèles sont conserver, ainsi, il sera parfaitement possible de mettre à disposition plus de modèles sans avoir à les entrainer de nouveaux.<br>
+Les metriques alors obtenues pour chaques modeles sont déposer sur le raspberry pi via SFTP, puis sont alimentés dans la base de données metrics pour avoir une historisation claire et propre de celles ci.
 
 ---
-# Interface Utilisateur
+# Interface Utilisateur [En cours]
 ### <u>Site Web</u>
+Le site Web sert donc d'interface utilisateur de notre outils. Il offrira plusieurs possibilités:
+- Consulter le Monitoring des Modeles pour voir nos performances
+- Avoir un Dashboard de notre systeme
+- Pouvoir envoyer une requete au modèle choisis et recevoir les 10 meilleurs repos concernant les topics
+- Consulter la base de données via requête SQL et consulter ainsi les ReadMe.
+- Avoir une visualisation de la distribution de nos données.
+- Pouvoir effectuer un réentrainement de nos modèles (Admin).
+- Ajouter des modèles pour les inférences (Admin).
+
 ---
 ### <u>Model Switch</u>
 Il sera donc possible de pouvoir switch le modèle utiliser parmis les 3 meilleurs modèles de l'entrainement actuelle. Ces modèles seront déjà présent sur le Serveur API et seront mis à jour ou remplacer chaque semaine à la suite de l'entrainement, tout en s'assurant de la continuité de fonctionnement du service.
 ---
 ### Monitoring Models
+Le but du monitoring des modèles est de pouvoir consulter rapidement les performances de nos modèles selon nos métriques.<br>
+Il sera donc possible de pouvoir faire un réentrainement de nos modèles en cas de besoin *(entrainement journalier)*.<br>
 ---
 ### Dashboard système
+Le Dashboard système permettra de voir l'état actuel de notre système (API, cluster, raspberry), d'avoir un temps de réponse moyen d'API et d'avoir des informations sur le versioning de l'API.<br>
 
 ---
 # Models
@@ -360,3 +432,5 @@ En définitive, les principaux points à améliorer sont inhérent aux choix de 
 Des outils d'intelligence artificielle générative (Claude et Gemini) ont été utilisés comme assistance au développement pour certaines parties du code de ce projet.<br>
 L'ensemble du code généré a été systématiquement relu, vérifié et testé manuellement.<br>
 Les choix techniques, l'architecture globale ainsi que la rédaction des rapports et des livrables ont été intégralement réalisés par l'étudiant.
+
+
