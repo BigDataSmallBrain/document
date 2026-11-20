@@ -1,0 +1,204 @@
+================================================================
+TABLE : public.heartbeats
+================================================================
+                                                                  Table "public.heartbeats"
+   Column    |           Type           | Collation | Nullable |                Default                 | Storage  | Compression | Stats target | Description 
+-------------+--------------------------+-----------+----------+----------------------------------------+----------+-------------+--------------+-------------
+ id          | bigint                   |           | not null | nextval('heartbeats_id_seq'::regclass) | plain    |             |              | 
+ received_at | timestamp with time zone |           | not null |                                        | plain    |             |              | 
+ cluster_ts  | text                     |           |          |                                        | extended |             |              | 
+ host        | text                     |           |          |                                        | extended |             |              | 
+ jobs        | integer                  |           |          |                                        | plain    |             |              | 
+ raw         | jsonb                    |           | not null | '{}'::jsonb                            | extended |             |              | 
+Indexes:
+    "heartbeats_pkey" PRIMARY KEY, btree (id)
+    "heartbeats_received_at_key" UNIQUE CONSTRAINT, btree (received_at)
+Not-null constraints:
+    "heartbeats_id_not_null" NOT NULL "id"
+    "heartbeats_received_at_not_null" NOT NULL "received_at"
+    "heartbeats_raw_not_null" NOT NULL "raw"
+Access method: heap
+ 
+================================================================
+TABLE : public.model_evaluations
+================================================================
+                                                                        Table "public.model_evaluations"
+         Column         |           Type           | Collation | Nullable |                    Default                    | Storage  | Compression | Stats target | Description 
+------------------------+--------------------------+-----------+----------+-----------------------------------------------+----------+-------------+--------------+-------------
+ id                     | bigint                   |           | not null | nextval('model_evaluations_id_seq'::regclass) | plain    |             |              | 
+ run_id                 | text                     |           | not null |                                               | extended |             |              | 
+ source_file            | text                     |           | not null |                                               | extended |             |              | 
+ run_date               | timestamp with time zone |           | not null |                                               | plain    |             |              | 
+ model_name             | text                     |           | not null |                                               | extended |             |              | 
+ embedding_dim          | integer                  |           |          |                                               | plain    |             |              | 
+ validation_set_version | text                     |           |          |                                               | extended |             |              | 
+ corpus                 | text                     |           |          |                                               | extended |             |              | 
+ n_queries_evaluated    | integer                  |           |          |                                               | plain    |             |              | 
+ bm25_recall_at_10      | double precision         |           |          |                                               | plain    |             |              | 
+ bm25_mrr               | double precision         |           |          |                                               | plain    |             |              | 
+ bm25_ndcg_at_10        | double precision         |           |          |                                               | plain    |             |              | 
+ e5_recall_at_10        | double precision         |           |          |                                               | plain    |             |              | 
+ e5_mrr                 | double precision         |           |          |                                               | plain    |             |              | 
+ e5_ndcg_at_10          | double precision         |           |          |                                               | plain    |             |              | 
+ rrf_recall_at_10       | double precision         |           |          |                                               | plain    |             |              | 
+ rrf_mrr                | double precision         |           |          |                                               | plain    |             |              | 
+ rrf_ndcg_at_10         | double precision         |           |          |                                               | plain    |             |              | 
+ details                | jsonb                    |           | not null | '{}'::jsonb                                   | extended |             |              | 
+ duration_seconds       | double precision         |           |          |                                               | plain    |             |              | 
+Indexes:
+    "model_evaluations_pkey" PRIMARY KEY, btree (id)
+    "idx_model_eval_date" btree (run_date DESC)
+    "idx_model_eval_model" btree (model_name)
+    "idx_model_eval_valset" btree (validation_set_version)
+    "model_evaluations_run_id_key" UNIQUE CONSTRAINT, btree (run_id)
+    "model_evaluations_source_file_key" UNIQUE CONSTRAINT, btree (source_file)
+Not-null constraints:
+    "model_evaluations_id_not_null" NOT NULL "id"
+    "model_evaluations_run_id_not_null" NOT NULL "run_id"
+    "model_evaluations_source_file_not_null" NOT NULL "source_file"
+    "model_evaluations_run_date_not_null" NOT NULL "run_date"
+    "model_evaluations_model_name_not_null" NOT NULL "model_name"
+    "model_evaluations_details_not_null" NOT NULL "details"
+Access method: heap
+ 
+================================================================
+TABLE : public.pipeline_runs
+================================================================
+                                                                     Table "public.pipeline_runs"
+      Column      |           Type           | Collation | Nullable |                  Default                  | Storage  | Compression | Stats target | Description 
+------------------+--------------------------+-----------+----------+-------------------------------------------+----------+-------------+--------------+-------------
+ id               | bigint                   |           | not null | nextval('pipeline_runs_id_seq'::regclass) | plain    |             |              | 
+ run_id           | text                     |           | not null |                                           | extended |             |              | 
+ source_file      | text                     |           | not null |                                           | extended |             |              | 
+ cluster_status   | text                     |           | not null |                                           | extended |             |              | 
+ import_status    | text                     |           | not null |                                           | extended |             |              | 
+ approach         | text                     |           |          |                                           | extended |             |              | 
+ model_name       | text                     |           |          |                                           | extended |             |              | 
+ model_version    | text                     |           |          |                                           | extended |             |              | 
+ n_repos          | integer                  |           |          |                                           | plain    |             |              | 
+ n_chunks         | integer                  |           |          |                                           | plain    |             |              | 
+ rows_inserted    | integer                  |           |          |                                           | plain    |             |              | 
+ rows_skipped     | integer                  |           |          |                                           | plain    |             |              | 
+ started_at       | timestamp with time zone |           |          |                                           | plain    |             |              | 
+ finished_at      | timestamp with time zone |           |          |                                           | plain    |             |              | 
+ duration_seconds | double precision         |           |          |                                           | plain    |             |              | 
+ imported_at      | timestamp with time zone |           | not null | now()                                     | plain    |             |              | 
+ error            | text                     |           |          |                                           | extended |             |              | 
+ metrics          | jsonb                    |           | not null |                                           | extended |             |              | 
+ model_available  | boolean                  |           | not null | false                                     | plain    |             |              | 
+ model_save_path  | text                     |           |          |                                           | extended |             |              | 
+Indexes:
+    "pipeline_runs_pkey" PRIMARY KEY, btree (id)
+    "idx_pipeline_runs_finished" btree (finished_at DESC)
+    "idx_pipeline_runs_model_available" btree (finished_at DESC) WHERE model_available = true
+    "idx_pipeline_runs_model_save_path" btree (model_save_path) WHERE model_save_path IS NOT NULL
+    "pipeline_runs_source_file_key" UNIQUE CONSTRAINT, btree (source_file)
+Check constraints:
+    "pipeline_runs_cluster_status_check" CHECK (cluster_status = ANY (ARRAY['success'::text, 'failed'::text]))
+    "pipeline_runs_import_status_check" CHECK (import_status = ANY (ARRAY['imported'::text, 'quarantined'::text, 'not_applicable'::text]))
+Not-null constraints:
+    "pipeline_runs_id_not_null" NOT NULL "id"
+    "pipeline_runs_run_id_not_null" NOT NULL "run_id"
+    "pipeline_runs_source_file_not_null" NOT NULL "source_file"
+    "pipeline_runs_cluster_status_not_null" NOT NULL "cluster_status"
+    "pipeline_runs_import_status_not_null" NOT NULL "import_status"
+    "pipeline_runs_imported_at_not_null" NOT NULL "imported_at"
+    "pipeline_runs_metrics_not_null" NOT NULL "metrics"
+    "pipeline_runs_model_available_not_null" NOT NULL "model_available"
+Access method: heap
+ 
+================================================================
+TABLE : public.repo_chunks
+================================================================
+                                                              Table "public.repo_chunks"
+     Column      |     Type     | Collation | Nullable |                 Default                 | Storage  | Compression | Stats target | Description 
+-----------------+--------------+-----------+----------+-----------------------------------------+----------+-------------+--------------+-------------
+ id              | integer      |           | not null | nextval('repo_chunks_id_seq'::regclass) | plain    |             |              | 
+ repo_name       | text         |           | not null |                                         | extended |             |              | 
+ section         | text         |           | not null | ''::text                                | extended |             |              | 
+ sub_chunk_index | integer      |           | not null | 0                                       | plain    |             |              | 
+ n_sub_chunks    | integer      |           |          |                                         | plain    |             |              | 
+ char_count      | integer      |           |          |                                         | plain    |             |              | 
+ chunk_text      | text         |           |          |                                         | extended |             |              | 
+ embedding       | halfvec(384) |           |          |                                         | external |             |              | 
+ tsv             | tsvector     |           |          |                                         | extended |             |              | 
+ model_version   | text         |           | not null |                                         | extended |             |              | 
+Indexes:
+    "repo_chunks_pkey" PRIMARY KEY, btree (id)
+    "repo_chunks_uniq" UNIQUE CONSTRAINT, btree (repo_name, model_version, section, sub_chunk_index)
+Foreign-key constraints:
+    "repo_chunks_repo_name_fkey" FOREIGN KEY (repo_name) REFERENCES repos(name)
+Not-null constraints:
+    "repo_chunks_id_not_null" NOT NULL "id"
+    "repo_chunks_repo_name_not_null" NOT NULL "repo_name"
+    "repo_chunks_section_not_null" NOT NULL "section"
+    "repo_chunks_sub_chunk_index_not_null" NOT NULL "sub_chunk_index"
+    "repo_chunks_model_version_not_null" NOT NULL "model_version"
+Access method: heap
+ 
+================================================================
+TABLE : public.repos
+================================================================
+                                                             Table "public.repos"
+      Column       |  Type   | Collation | Nullable |              Default              | Storage  | Compression | Stats target | Description 
+-------------------+---------+-----------+----------+-----------------------------------+----------+-------------+--------------+-------------
+ id                | bigint  |           | not null | nextval('repos_id_seq'::regclass) | plain    |             |              | 
+ name              | text    |           | not null |                                   | extended |             |              | 
+ url               | text    |           |          |                                   | extended |             |              | 
+ description       | text    |           |          |                                   | extended |             |              | 
+ content_language  | text    |           |          |                                   | extended |             |              | 
+ readme_compressed | bytea   |           |          |                                   | extended |             |              | 
+ readme_length     | integer |           |          |                                   | plain    |             |              | 
+ stars             | integer |           |          |                                   | plain    |             |              | 
+ forks             | integer |           |          |                                   | plain    |             |              | 
+ primary_language  | text    |           |          |                                   | extended |             |              | 
+ license           | text    |           |          |                                   | extended |             |              | 
+ topics            | text    |           |          |                                   | extended |             |              | 
+ created_at        | text    |           |          |                                   | extended |             |              | 
+ pushed_at         | text    |           |          |                                   | extended |             |              | 
+ archived          | integer |           |          |                                   | plain    |             |              | 
+ last_fetched_at   | text    |           |          |                                   | extended |             |              | 
+Indexes:
+    "repos_pkey" PRIMARY KEY, btree (name)
+    "idx_content_language" btree (content_language)
+    "idx_id" btree (id)
+    "idx_stars" btree (stars)
+Referenced by:
+    TABLE "repo_chunks" CONSTRAINT "repo_chunks_repo_name_fkey" FOREIGN KEY (repo_name) REFERENCES repos(name)
+Not-null constraints:
+    "repos_id_not_null" NOT NULL "id"
+    "repos_name_not_null" NOT NULL "name"
+Access method: heap
+ 
+================================================================
+TABLE : public.site_repos
+================================================================
+                                                     Table "public.site_repos"
+      Column      |           Type           | Collation | Nullable | Default | Storage  | Compression | Stats target | Description 
+------------------+--------------------------+-----------+----------+---------+----------+-------------+--------------+-------------
+ id               | bigint                   |           | not null |         | plain    |             |              | 
+ name             | text                     |           |          |         | extended |             |              | 
+ description      | text                     |           |          |         | extended |             |              | 
+ content_language | text                     |           |          |         | extended |             |              | 
+ readme_length    | integer                  |           |          |         | plain    |             |              | 
+ stars            | integer                  |           |          |         | plain    |             |              | 
+ forks            | integer                  |           |          |         | plain    |             |              | 
+ primary_language | text                     |           |          |         | extended |             |              | 
+ license          | text                     |           |          |         | extended |             |              | 
+ topics           | text[]                   |           |          |         | extended |             |              | 
+ created_at       | timestamp with time zone |           |          |         | plain    |             |              | 
+ pushed_at        | timestamp with time zone |           |          |         | plain    |             |              | 
+ last_fetched_at  | timestamp with time zone |           |          |         | plain    |             |              | 
+ archived         | boolean                  |           |          |         | plain    |             |              | 
+Indexes:
+    "site_repos_pkey" PRIMARY KEY, btree (id)
+    "idx_site_clang" btree (content_language, stars DESC, id DESC)
+    "idx_site_lang_stars" btree (primary_language, stars DESC, id DESC)
+    "idx_site_license" btree (license, stars DESC, id DESC)
+    "idx_site_pushed" btree (pushed_at DESC NULLS LAST)
+    "idx_site_search" gin (site_doc(name, description))
+    "idx_site_stars" btree (stars DESC, id DESC)
+    "idx_site_topics" gin (topics)
+Not-null constraints:
+    "site_repos_id_not_null" NOT NULL "id"
+Access method: heap

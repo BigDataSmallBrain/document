@@ -228,12 +228,14 @@ Le site Web sert donc d'interface utilisateur de notre outils. Il offrira plusie
 ---
 ### <u>Model Switch</u>
 Il sera donc possible de pouvoir switch le modèle utiliser parmis les 3 meilleurs modèles de l'entrainement actuelle. Ces modèles seront déjà présent sur le Serveur API et seront mis à jour ou remplacer chaque semaine à la suite de l'entrainement, tout en s'assurant de la continuité de fonctionnement du service.
+
 ---
-### Monitoring Models
+### <u>Monitoring Models</u>
 Le but du monitoring des modèles est de pouvoir consulter rapidement les performances de nos modèles selon nos métriques.<br>
 Il sera donc possible de pouvoir faire un réentrainement de nos modèles en cas de besoin *(entrainement journalier)*.<br>
+
 ---
-### Dashboard système
+### <u>Dashboard système</u>
 Le Dashboard système permettra de voir l'état actuel de notre système (API, cluster, raspberry), d'avoir un temps de réponse moyen d'API et d'avoir des informations sur le versioning de l'API.<br>
 
 ---
@@ -428,7 +430,7 @@ En définitive, les principaux points à améliorer sont inhérent aux choix de 
 
 
 ---
-**Avertissement (Disclaimer)**<br>
+<u>**Avertissement (Disclaimer)**<br></u>
 Des outils d'intelligence artificielle générative (Claude et Gemini) ont été utilisés comme assistance au développement pour certaines parties du code de ce projet.<br>
 L'ensemble du code généré a été systématiquement relu, vérifié et testé manuellement.<br>
 Les choix techniques, l'architecture globale ainsi que la rédaction des rapports et des livrables ont été intégralement réalisés par l'étudiant.
