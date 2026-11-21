@@ -104,7 +104,6 @@ Chaque push sur `main` ou `dev` déclenche la CI du repository (`.github/workflo
 │   ├── README.md
 │   ├── requirements.txt
 │   └── smallbrain.service
-├── tag_language.py
 ├── tests
 ├── validation_archive
 │   └── validation_v1-2ecf814e.json
