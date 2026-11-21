@@ -74,6 +74,9 @@ Le site n'écoute que localement (`127.0.0.1:8000`) et tourne en tant que servic
 
 Les demandes de réentraînement déposées depuis le site respectent la même règle : c'est le cluster qui vient les récupérer, et il les considère comme non fiables. Il ne garde que ses propres valeurs pour le modèle (`model_name`, `revision`, `embedding_dim`, `trust_remote_code`), n'accepte que certains paramètres avec des bornes, et vérifie chaque chemin de sauvegarde. Ainsi, même si le site venait à être compromis, il ne pourrait pas faire exécuter n'importe quoi au cluster.
 
+Pour vérifier l'état de la CI, le raspberry utilise un jeton GitHub en lecture seule, limité à la consultation des GitHub Actions. Il est stocké dans un fichier uniquement lisible par root (`/etc/smallbrain-deploy.env`).<br>
+Seuls les commits de `main` dont la CI est validée sont déployés.
+
 ---
 # Base de données
 Nous avons une base de données PSQL `repos` sur le raspberry pour la conservation de nos données, dont les principales tables sont:
@@ -199,6 +202,8 @@ Ces différentes mesures lors du scrapping permettent ainsi une collecte efficac
 
 L'API de GitHub plafonne chaque recherche à 1000 résultats. Pour contourner cette limite, l'espace de recherche est découpé en segments (tranche d'étoiles × licence × plage de dates). Lorsqu'un segment dépasse 1000 repos, il est scindé en deux sous-segments plus fins, d'abord par étoiles, puis par dates si les étoiles sont indivisibles, et ainsi de suite jusqu'à passer sous le seuil. Les sous-segments sont placés dans une file d'attente de type FILO : le dernier segment créé est le premier traité, ce qui permet de descendre un segment saturé jusqu'à ses feuilles avant d'en ouvrir un autre. La progression de chaque segment est sauvegardée pour pouvoir reprendre la collecte à tout moment.
 
+Lorsqu'un segment est interrompu (quota épuisé, début du week-end, arrêt du service), il est remis au sommet de la pile avec sa position, et c'est donc lui qui est repris en premier.
+
 ---
 ### <u>Récupération:</u>
 
@@ -208,9 +213,21 @@ Dans un premier temps, au début du projet afin de se consistuer un DataWarehous
 
 <u>**Récupération lors du projet**</u>
 
-Ensuite, lorsque nous avons collecter une grosse quantités de données (Environs 5 millions de repos), nous modifions le script de récupération, cette fois-ci, il ne récupère que sur les 5 derniers jours de modification (push, création), toujours en ignorant le nombre d'etoiles.
+Ensuite, lorsque nous avons collecter une grosse quantités de données (Environs 5 millions de repos), nous modifions le script de récupération, cette fois-ci, il ne récupère que les repos modifiés (push, création) il y a 5 jours ou moins, toujours en ignorant le nombre d'etoiles.
 
-Nous stoppons la récuperation les Week-end, car c'est à ce moment que s'effectue la sauvegarde de la base de données et les entrainements.
+Le collecteur tourne alors sur le raspberry pi en tant que service (`collector.service`), et effectue une passe complète de ces 5 derniers jours toutes les 24h. Les repos encore actifs sont donc revus plusieurs fois, ce qui permet de mettre à jour leurs étoiles et leur README.
+
+La récupération est mise en pause automatiquement du samedi 00h00 au lundi 00h00, car c'est à ce moment que s'effectue la sauvegarde de la base de données et les entrainements.
+
+---
+### <u>Détection de la langue:</u>
+
+La détection de la langue faisait parfois échouer la collecte : la librairie utilisée (`langdetect`) pouvait renvoyer une erreur sur certains textes, et faisait alors échouer tout le segment en cours. Elle n'est également pas prévue pour être utilisée par plusieurs threads en même temps.
+
+La détection a donc été reprise sur le modèle du script `tag_language`, déjà utilisé pour re-taguer la base:
+- La langue est détectée sur le début du README, nettoyé de ses badges, images, liens et balises HTML (la description n'est utilisée qu'en secours).
+- La détection est déterministe, et protégée pour l'utilisation par plusieurs threads.
+- En cas d'erreur, la langue est considérée comme inconnue : le repo est simplement ignoré, sans faire échouer le reste du segment.
 
 # Entrainement
 ### <u>Données </u>
@@ -288,7 +305,39 @@ Le réentraînement des modèles se fait depuis la zone Admin.
 
 ---
 ### <u>Dashboard système</u>
-Le Dashboard système permettra de voir l'état actuel de notre système (API, cluster, raspberry), d'avoir un temps de réponse moyen d'API et d'avoir des informations sur le versioning de l'API.<br>
+Le Dashboard système permet de voir l'état actuel de notre système:
+- **PostgreSQL :** état de la base, temps de réponse, taille et nombre de repos.
+- **API d'inférence :** état et temps de réponse.
+- **Cluster :** dernier run, et activité du cluster (dernier signal reçu, jobs en file).
+- **Collecteur :** état (en collecte, quota épuisé, pause du week-end...), date de reprise, nombre de tokens GitHub utilisés et restants, nombre de workers actifs et nombre total de repos collectés.
+- **Builds :** état du dernier build (CI) sur `main` de chaque repository. Le détail des commits n'est visible que par les administrateurs, les repositories étant privés.
+
+---
+# CI/CD
+### <u>Intégration continue (CI)</u>
+Chaque push ou Pull Request sur les branches `main` et `dev` des repositories site, Cluster, Raspberry et Collector déclenche une vérification automatique via GitHub Actions:
+- Recherche des erreurs dans le code Python (`ruff`) et dans les scripts shell (`shellcheck`).
+- Vérification des fichiers de services systemd, et des configurations des modèles pour le Cluster.
+- Tests automatiques (`pytest`), environ une centaine au total : formulaire Admin, validation des demandes par le cluster, Test et Load, nettoyage des poids, importeur, collecteur, déploiement...
+
+Les tests du Cluster n'ont pas besoin de GPU : les librairies de calcul sont simulées, seule la logique est vérifiée.
+
+---
+### <u>Déploiement continu (CD)</u>
+Afin de respecter la règle de sécurité du projet, ce n'est pas GitHub qui se connecte au raspberry pi pour déployer : c'est le raspberry qui vient vérifier toutes les 5 minutes s'il y a une nouvelle version (`deploy.timer`).
+
+Pour chaque repository (site, Raspberry, Collector), le déploiement ne se fait que si:
+- Un nouveau commit est présent sur `main`.
+- La CI de ce commit est validée.
+- Aucune modification n'a été faite directement sur le raspberry.
+
+Il applique ensuite ce qui a changé (dépendances, services, importeur...) et redémarre les services concernés. Pour le site, si celui-ci ne répond plus après la mise à jour, le raspberry revient automatiquement à la version précédente.<br>
+Les migrations de la base de données ne sont jamais lancées automatiquement, elles sont seulement signalées.<br>
+Une notification est envoyée sur mon téléphone via `ntfy` à chaque déploiement ou échec.
+
+Le Cluster n'a quant à lui pas de déploiement automatique, puisque rien ne doit se connecter à lui : il est mis à jour manuellement depuis le cluster (`git pull`).
+
+Toutes les modifications se font donc sur la branche `dev`, puis passent sur `main` via une Pull Request, et ne sont jamais faites directement sur le raspberry.
 
 ---
 # Models
@@ -479,6 +528,8 @@ Voici une liste des points à améliorer que j'ai relevé durant mon projet:
 - Le jeu de donnée de validation a été réaliser par moi même, il pourrait être pertinent de recevoir l'avis de plusieurs annotateurs pour eviter les biais.
 - L'import des chunks en base n'est possible que pour les modèles de 384 dimensions (`repo_chunks` en `halfvec(384)`).
 - La page de requêtes SQL du site est publique : les requêtes sont en lecture seule et limitées à 5 secondes, mais leur nombre n'est pas limité.
+- Le Cluster n'a pas de déploiement automatique : sa mise à jour reste manuelle.
+- Les modifications des fichiers de configuration `.env` (non versionnés car ils contiennent des secrets) nécessitent un redémarrage manuel du service concerné.
 
 En définitive, les principaux points à améliorer sont inhérent aux choix de conceptions de l'architecture qui ont été fait.
 

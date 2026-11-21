@@ -27,9 +27,11 @@ flowchart LR
 - <u>**Cluster :**</u> Repository pour le cluster. Il contient les différents scripts pour effectuer les entrainements des modèles.
 
 ## <u>Branches</u>
-- <u>**Main:**</u> Branches principales de production.
-- <u>**Develop:**</u> Branches secondaire permettant d'effectuer des tests avant la production.
-- <u>**Autres branches:**</u> Branches secondaires pour une préparation avant la develop.
+- <u>**Main:**</u> Branches principales de production. Seule cette branche est déployée sur le raspberry.
+- <u>**Dev:**</u> Branches secondaire permettant d'effectuer des tests avant la production. Les changements passent sur `main` via une Pull Request.
+- <u>**Autres branches:**</u> Branches secondaires pour une préparation avant la dev.
+
+Chaque push sur `main` ou `dev` déclenche la CI du repository (`.github/workflows/ci.yml`).
 
 ---
 ---
@@ -44,14 +46,23 @@ flowchart LR
 ├── bin
 │   ├── auth_report.sh
 │   ├── backup_repos.sh
+│   ├── deploy_pull.py
 │   ├── export_repos.py
 │   ├── heartbeat_import.py
 │   ├── make_annotation_sheet.py
 │   └── make_validation_set.py
 ├── Collector
+│   ├── collector.py
+│   ├── collector.service
+│   ├── requirements.txt
+│   └── state
+│       ├── state.json      (reprise de la collecte)
+│       └── status.json     (état affiché sur la page Système)
 ├── data
 │   ├── judgments_9adf8ed7c8cc.json
 │   └── manual_queries_v1.json
+├── deploy.service
+├── deploy.timer
 ├── duckdns
 │   ├── duck.log
 │   └── duck.sh
@@ -94,10 +105,16 @@ flowchart LR
 │   ├── requirements.txt
 │   └── smallbrain.service
 ├── tag_language.py
+├── tests
 ├── validation_archive
 │   └── validation_v1-2ecf814e.json
 └── venv-export
 ``` 
+
+Fichiers de configuration hors repository (non versionnés, car ils contiennent des secrets):
+- `/etc/smallbrain-deploy.env` : jeton GitHub du déploiement et adresse `ntfy` (lisible uniquement par root).
+- `smallbrain/.env` : configuration du site (dont le jeton GitHub pour l'affichage des builds).
+- `Collector/.env` : jeton GitHub du collecteur.
 
 ### Espace d'échange
 Dossier partagé avec le cluster via SFTP (`/mnt/pgdata/export`, chroot de l'utilisateur `cluster`).
@@ -156,16 +173,17 @@ Cluster/
 │   ├── model_configs_history
 │   └── requests
 │       └── <id de la demande>
-└── repos_pipeline
-    ├── daily_requests.py
-    ├── eval_retrieval.py
-    ├── install_models.py
-    ├── model_config.json
-    ├── __pycache__
-    │   └── eval_retrieval.cpython-312.pyc
-    ├── run_pipeline.py
-    ├── submit_models.sh
-    └── weekly_run.sh
+├── repos_pipeline
+│   ├── daily_requests.py
+│   ├── eval_retrieval.py
+│   ├── install_models.py
+│   ├── model_config.json
+│   ├── __pycache__
+│   │   └── eval_retrieval.cpython-312.pyc
+│   ├── run_pipeline.py
+│   ├── submit_models.sh
+│   └── weekly_run.sh
+└── tests
 ```
 
 Raid-etu/
