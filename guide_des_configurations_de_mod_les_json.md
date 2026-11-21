@@ -1,6 +1,7 @@
 # Guide des configurations de modèles (JSON)
 
-Ce document décrit le format des fichiers de configuration `.json` à déposer sur le Raspberry Pi dans `/mnt/pgdata/export/configs/active/` (et à référencer dans `/mnt/pgdata/export/configs/manifest.json`) pour piloter les runs d'inférence et de fine-tuning sur le cluster.
+Ce document décrit le format des fichiers de configuration `.json` utilisés par le cluster pour piloter les runs d'inférence et de fine-tuning. Les configurations de référence, utilisées par le run hebdomadaire, se trouvent dans `Cluster/output/model_configs/`.<br>
+Les modifications ne se font pas à la main : elles passent par la zone Admin du site, qui dépose une demande. Le cluster génère alors une configuration par modèle dans `Cluster/output/requests/<id>/`, au même format que ci-dessous.
 
 ---
 
@@ -60,18 +61,34 @@ Pour déclencher une phase d'entraînement avant la génération des embeddings,
   "batch_size": 256,
   "default_tag": "bgem3ft1",
   "training": {
-    "dataset_file": "train_pairs.jsonl",
     "epochs": 2,
     "train_batch_size": 16,
     "learning_rate": 2e-5,
-    "warmup_ratio": 0.1
+    "warmup_ratio": 0.1,
+    "dataset_file": "requests/datasets/ft_20261121T143000Z-retrain.jsonl",
+    "dataset_sha256": "0bbe360c63da9f7dbfcc4facc0d9eece050556e2cc3ab90b70d3e6474c320e97"
   }
 }
 ```
 
 ---
 
-## 3. Référence des paramètres
+## 3. Test et Load
+
+Lorsqu'une demande est faite en **Load**, le cluster ajoute deux clés à la configuration générée :
+```json
+  "promote_to": "bge-m3.json",
+  "reference_tag": "bgem3"
+```
+Si le run et son évaluation réussissent, `Cluster/output/model_configs/bge-m3.json` est remplacé (l'ancienne version est archivée dans `Cluster/output/model_configs_history/`). Si les poids ne sont pas ceux du modèle brut, la nouvelle référence contient :
+```json
+  "promoted_model": "bge-m3-5617a9f6-ft-d6e92a"
+```
+qui pointe vers `~/raid-etu/models/promoted/<promoted_model>`, dossier hors de la rotation des sauvegardes. Les poids qui ne sont plus utilisés sont supprimés automatiquement 3 semaines après avoir été remplacés.
+
+---
+
+## 4. Référence des paramètres
 
 ### Paramètres généraux (obligatoires)
 
@@ -97,20 +114,31 @@ Pour déclencher une phase d'entraînement avant la génération des embeddings,
 | :--- | :--- | :--- |
 | `mode` | `string` | Mettre `"finetune"` pour activer l'entraînement avant l'encodage. Omit ou autre valeur = inférence seule. |
 | `base_saved_model` | `string` *(opt.)* | Chemin relatif dans `~/raid-etu/models/save/` (ex: `"2026-W47/bge-m3-5617a9f6"`) pour repartir d'une sauvegarde locale. Si absent ou `null`, repart du modèle brut (`model_name` / `revision`). |
-| `training.dataset_file` | `string` | Nom du fichier `.jsonl` présent dans `/mnt/pgdata/export/data/` sur le Pi. |
+| `training.dataset_file` | `string` | Chemin du fichier `.jsonl` dans `/mnt/pgdata/export/data/` sur le Pi (ex: `requests/datasets/ft_<id>.jsonl`). |
 | `training.epochs` | `int` | Nombre de passes complètes sur le jeu d'entraînement (défaut : `2`). |
 | `training.train_batch_size` | `int` | Taille de batch par GPU pendant l'entraînement (défaut : `16`). |
 | `training.learning_rate` | `float` | Taux d'apprentissage (défaut : `2e-5`). |
 | `training.warmup_ratio` | `float` | Proportion des pas dédiée au warmup (défaut : `0.1`). |
+| `training.dataset_sha256` | `string` | Empreinte du jeu de paires, vérifiée par le cluster avant l'entraînement. |
+
+### Paramètres ajoutés par une demande du site
+
+| Clé | Type | Description |
+| :--- | :--- | :--- |
+| `promote_to` | `string` *(opt.)* | Fichier de `model_configs/` à remplacer si le run réussit (Load uniquement). |
+| `reference_tag` | `string` *(opt.)* | Tag hebdomadaire conservé dans la configuration adoptée (Load uniquement). |
+| `promoted_model` | `string` *(opt.)* | Poids permanents à charger depuis `~/raid-etu/models/promoted/`. |
+
+Les préfixes (`query_prefix`, `passage_prefix`) ne sont pas modifiables depuis le site : ils dépendent de la manière dont chaque modèle a été entraîné, et un fine-tuning réutilise ceux de la configuration de référence.
 
 ---
 
-## 4. Règles importantes et bonnes pratiques
+## 5. Règles importantes et bonnes pratiques
 
-1. **Identifiants distincts pour un modèle fine-tuné :**  
-   Modifiez toujours `model_version` et `default_tag` (max 12 caractères alphanumériques, ex: `bgem3ft1`) par rapport au modèle de base. Cela évite d'écraser le modèle original dans `~/raid-etu/models/save/` et garantit un fichier de métriques distinct (`metrics_<run_id>-bgem3ft1.json`).
+1. **Identifiants distincts pour un modèle réentraîné :**  
+   Ils sont générés automatiquement par le cluster : `model_version` reçoit un suffixe `-ft-<hash>` (fine-tuning) ou `-inf-<hash>` (inférence), ce qui évite d'écraser le modèle d'origine dans `~/raid-etu/models/save/`. Le tag du run est soit celui choisi sur le site, soit un tag automatique (`<tag>r<MMJJ>`).
 2. **Format du jeu d'entraînement (`dataset_file`) :**  
-   Le fichier déposé dans `/mnt/pgdata/export/data/` doit être au format JSON Lines (`.jsonl`), avec une paire par ligne :
+   Le fichier est déposé depuis la zone Admin du site, puis enregistré dans `/mnt/pgdata/export/data/requests/datasets/` sur le Pi. Il doit être au format JSON Lines (`.jsonl`), avec une paire par ligne :
    ```json
    {"anchor": "requête ou description recherchée", "positive": "extrait de README ou dépôt pertinent"}
    ```

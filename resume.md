@@ -34,7 +34,7 @@ flowchart LR
     Cluster -->|X| AWS
     AWS -->|X| RPI
     RPI -->|Fast-API| API
-    RPI -->|X| Web
+    RPI -->|Tailscale Funnel| Web
     AWS -->|WireGuard| API
 ```
 ---
@@ -69,11 +69,17 @@ Un transfert des poids était également necessaire entre le Cluster et le Serve
 
 Enfin pour l'utilisation de l'API [Inserer ici comment cela à été réaliser].
 
+Le site Web, hébergé sur le raspberry pi, est quant à lui exposé sur Internet via **Tailscale Funnel**. Ainsi, aucun port n'est ouvert sur ma box personnelle et mon adresse IP n'est pas exposée, Tailscale se chargeant également du certificat HTTPS.<br>
+Le site n'écoute que localement (`127.0.0.1:8000`) et tourne en tant que service systemd durci (`smallbrain.service`) : il ne peut écrire que dans le dossier des demandes (`data/requests`), et redémarre automatiquement en cas d'erreur ou de redémarrage du raspberry.
+
+Les demandes de réentraînement déposées depuis le site respectent la même règle : c'est le cluster qui vient les récupérer, et il les considère comme non fiables. Il ne garde que ses propres valeurs pour le modèle (`model_name`, `revision`, `embedding_dim`, `trust_remote_code`), n'accepte que certains paramètres avec des bornes, et vérifie chaque chemin de sauvegarde. Ainsi, même si le site venait à être compromis, il ne pourrait pas faire exécuter n'importe quoi au cluster.
+
 ---
 # Base de données
-Nous avons deux bases de données type PSQL sur le raspberry pour la conservation de nos données:
+Nous avons une base de données PSQL `repos` sur le raspberry pour la conservation de nos données, dont les principales tables sont:
 - Repos : Contient les repos alimenter par notre scrapping
 - model_evaluations : Contient les métriques hébdomadaire par runs et par models.
+- retrain_requests : Contient l'historique des demandes de réentrainement effectuées depuis le site.
 
 Ces bases de données sont alors sauvegardé tout les samedis à 0h00. <br>
 Seuls les 3 dernières sauvegardes sont conservés, ce qui fait un historique de 3 semaines.
@@ -102,7 +108,8 @@ Seuls les 3 dernières sauvegardes sont conservés, ce qui fait un historique de
 Conserve l'historique hebdomadaire des évaluations de recherche par modèle et par run.<br>
 - Mode Append-Only : Il est uniquement possible de rajouter des données, impossible de les modifier ou les ecrasers.
 - Unicité : Les contraintes d'unicités empêche l'insertion des doublons dans la base.
-- Entrée des donneés : L'ingestion est déclenchée chaque dimanche à 12hOO via le timer systemd `importer.timer` exécutant le service `importer.service` pour alimenter la base de données, les fichiers d'abord contenue dans `inbox` sont alors traités puis deplacer dans le dossier `processed`.<br>
+- Entrée des donneés : L'ingestion est déclenchée dès que le cluster dépose un fichier dans `inbox`, via `importer.path` exécutant le service `importer.service` pour alimenter la base de données. Les fichiers sont alors traités puis déplacés dans le dossier `processed`.<br>
+Un passage de secours est également effectué tous les jours à 12h00 via le timer `importer.timer`, afin de retraiter les fichiers qui n'auraient pas pu l'être (base indisponible par exemple).<br>
 <br>
 
 | Colonne | Type PostgreSQL | Contraintes | Description |
@@ -126,8 +133,27 @@ Conserve l'historique hebdomadaire des évaluations de recherche par modèle et 
 | `rrf_mrr` | `DOUBLE PRECISION` | | Score MRR - fusion hybride (*Reciprocal Rank Fusion*) |
 | `rrf_ndcg_at_10` | `DOUBLE PRECISION` | | Score nDCG@10 - fusion hybride (*Reciprocal Rank Fusion*) |
 | `details` | `JSONB` | `NOT NULL DEFAULT '{}'` | Métriques détaillés : scores par tranche (`by_size`), intervalles de confiance (`ci95`) et tests appariés (`paired_diff`) |
+| `model_name` | `TEXT` | `NOT NULL` | Nom HuggingFace du modèle évalué |
+| `config` | `JSONB` | | Configuration exacte utilisée pour le run (préfixes, révision, bloc `training`, point de départ...) |
 
 <br>
+
+## Retrain Requests
+Conserve l'historique des demandes de réentraînement déposées depuis le site et prises en charge par le cluster.<br>
+- Mode Append-Only : Comme pour les autres tables, l'importeur ne peut qu'ajouter des lignes.
+- Entrée des données : Lorsque le cluster prend en charge une demande, il dépose un accusé `request_<id>.json` dans `inbox`, qui est directement enregistré par l'importeur. Le site archive alors la demande et affiche l'état de chaque run.
+
+| Colonne | Type PostgreSQL | Contraintes | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `TEXT` | `PRIMARY KEY` | Identifiant de la demande (ex. `20261121T143000Z-retrain`) |
+| `status` | `TEXT` | `NOT NULL` | `submitted` si au moins un run a été lancé, sinon `rejected` |
+| `processed_at` | `TIMESTAMPTZ` | `NOT NULL` | Date de la prise en charge par le cluster |
+| `imported_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | Date de l'import sur le raspberry |
+| `raw` | `JSONB` | `NOT NULL` | Accusé complet : runs lancés (`run_id`, job Slurm), erreurs et avertissements |
+
+<br>
+
+La table `pipeline_runs` reçoit également une colonne `config` (`JSONB`), afin de pouvoir consulter depuis le site la configuration utilisée par chaque run, réussi ou non.
 
 
 ---
@@ -213,6 +239,31 @@ Les modèles, à l'image de la base de données, seront donc sauvegarder pendant
 Tout les modèles sont conserver, ainsi, il sera parfaitement possible de mettre à disposition plus de modèles sans avoir à les entrainer de nouveaux.<br>
 Les metriques alors obtenues pour chaques modeles sont déposer sur le raspberry pi via SFTP, puis sont alimentés dans la base de données metrics pour avoir une historisation claire et propre de celles ci.
 
+### <u>Réentrainement à la demande</u>
+En plus du run hebdomadaire, il est possible de demander le réentrainement d'un ou plusieurs modèles depuis la zone Admin du site.
+
+Le déroulement est le suivant:
+1. La demande est déposée depuis le site, elle est alors enregistrée sur le raspberry pi.
+2. Chaque nuit à 00h00, le cluster récupère la demande et lance un entrainement pour chacun des modèles demandés.
+3. Une fois l'entrainement terminé, le cluster dépose les métriques sur le raspberry pi, qui sont directement importées dans la base de données.
+4. Les résultats sont alors visibles depuis la page Monitoring du site.
+
+Pour chaque modèle, il est possible de choisir:
+- Le mode : fine-tuning, ou simple lancement avec de nouveaux hyperparamètres.
+- Le point de départ : le modèle de base, ou une sauvegarde des 3 dernières semaines.
+- Les hyperparamètres : epochs, batch, learning rate, nombre de tokens maximum...
+- Le tag du run : facultatif, il permet de retrouver plus facilement le run dans le Monitoring.
+- L'action : Test ou Load.
+
+Pour le fine-tuning, le jeu de données est directement déposé depuis le site (fichier JSONL).
+
+### <u>Test et Load</u>
+- **Test :** Permet d'essayer une configuration sans modifier celle du cluster.
+- **Load :** Si l'entrainement réussit, la configuration remplace celle du cluster et sera utilisée lors des prochains runs hebdomadaires. L'ancienne configuration est conservée.
+
+Lorsqu'un modèle fine-tuné est chargé, ses poids sont conservés tant que la configuration les utilise. Une fois remplacés par un nouveau Load, ils sont encore gardés 3 semaines, puis supprimés automatiquement.<br>
+Le tag choisi ne s'applique qu'au run demandé : les runs hebdomadaires gardent le format `AAAA-WW-{model}`.
+
 ---
 # Interface Utilisateur [En cours]
 ### <u>Site Web</u>
@@ -232,7 +283,8 @@ Il sera donc possible de pouvoir switch le modèle utiliser parmis les 3 meilleu
 ---
 ### <u>Monitoring Models</u>
 Le but du monitoring des modèles est de pouvoir consulter rapidement les performances de nos modèles selon nos métriques.<br>
-Il sera donc possible de pouvoir faire un réentrainement de nos modèles en cas de besoin *(entrainement journalier)*.<br>
+Il est également possible de consulter la configuration exacte utilisée par chaque run, ainsi que le résultat d'un Load (configuration adoptée ou non).<br>
+Le réentraînement des modèles se fait depuis la zone Admin.
 
 ---
 ### <u>Dashboard système</u>
@@ -425,6 +477,8 @@ Voici une liste des points à améliorer que j'ai relevé durant mon projet:
 - Manque de redondance des données : Toutes les données sont présentes uniquement sur le raspberry, si il casse, je perds tout.
 - Simplifié l'architecture : Cela se réfère également au premier point, mais bien que cela puisse être interessant d'avoir une architecture complexe pour un projet universitaire, dans un cadre pratique réel, on va préféré la simplicité.
 - Le jeu de donnée de validation a été réaliser par moi même, il pourrait être pertinent de recevoir l'avis de plusieurs annotateurs pour eviter les biais.
+- L'import des chunks en base n'est possible que pour les modèles de 384 dimensions (`repo_chunks` en `halfvec(384)`).
+- La page de requêtes SQL du site est publique : les requêtes sont en lecture seule et limitées à 5 secondes, mais leur nombre n'est pas limité.
 
 En définitive, les principaux points à améliorer sont inhérent aux choix de conceptions de l'architecture qui ont été fait.
 

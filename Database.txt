@@ -18,7 +18,7 @@ Not-null constraints:
     "heartbeats_received_at_not_null" NOT NULL "received_at"
     "heartbeats_raw_not_null" NOT NULL "raw"
 Access method: heap
- 
+
 ================================================================
 TABLE : public.model_evaluations
 ================================================================
@@ -45,6 +45,7 @@ TABLE : public.model_evaluations
  rrf_ndcg_at_10         | double precision         |           |          |                                               | plain    |             |              | 
  details                | jsonb                    |           | not null | '{}'::jsonb                                   | extended |             |              | 
  duration_seconds       | double precision         |           |          |                                               | plain    |             |              | 
+ config                 | jsonb                    |           |          |                                               | extended |             |              | 
 Indexes:
     "model_evaluations_pkey" PRIMARY KEY, btree (id)
     "idx_model_eval_date" btree (run_date DESC)
@@ -60,7 +61,7 @@ Not-null constraints:
     "model_evaluations_model_name_not_null" NOT NULL "model_name"
     "model_evaluations_details_not_null" NOT NULL "details"
 Access method: heap
- 
+
 ================================================================
 TABLE : public.pipeline_runs
 ================================================================
@@ -87,6 +88,7 @@ TABLE : public.pipeline_runs
  metrics          | jsonb                    |           | not null |                                           | extended |             |              | 
  model_available  | boolean                  |           | not null | false                                     | plain    |             |              | 
  model_save_path  | text                     |           |          |                                           | extended |             |              | 
+ config           | jsonb                    |           |          |                                           | extended |             |              | 
 Indexes:
     "pipeline_runs_pkey" PRIMARY KEY, btree (id)
     "idx_pipeline_runs_finished" btree (finished_at DESC)
@@ -106,7 +108,7 @@ Not-null constraints:
     "pipeline_runs_metrics_not_null" NOT NULL "metrics"
     "pipeline_runs_model_available_not_null" NOT NULL "model_available"
 Access method: heap
- 
+
 ================================================================
 TABLE : public.repo_chunks
 ================================================================
@@ -135,7 +137,7 @@ Not-null constraints:
     "repo_chunks_sub_chunk_index_not_null" NOT NULL "sub_chunk_index"
     "repo_chunks_model_version_not_null" NOT NULL "model_version"
 Access method: heap
- 
+
 ================================================================
 TABLE : public.repos
 ================================================================
@@ -169,7 +171,31 @@ Not-null constraints:
     "repos_id_not_null" NOT NULL "id"
     "repos_name_not_null" NOT NULL "name"
 Access method: heap
- 
+
+================================================================
+TABLE : public.retrain_requests
+================================================================
+                                                Table "public.retrain_requests"
+    Column    |           Type           | Collation | Nullable | Default | Storage  | Compression | Stats target | Description 
+--------------+--------------------------+-----------+----------+---------+----------+-------------+--------------+-------------
+ id           | text                     |           | not null |         | extended |             |              | 
+ status       | text                     |           | not null |         | extended |             |              | 
+ processed_at | timestamp with time zone |           | not null |         | plain    |             |              | 
+ imported_at  | timestamp with time zone |           | not null | now()   | plain    |             |              | 
+ raw          | jsonb                    |           | not null |         | extended |             |              | 
+Indexes:
+    "retrain_requests_pkey" PRIMARY KEY, btree (id)
+    "idx_retrain_requests_processed" btree (processed_at DESC)
+Check constraints:
+    "retrain_requests_status_check" CHECK (status = ANY (ARRAY['submitted'::text, 'rejected'::text]))
+Not-null constraints:
+    "retrain_requests_id_not_null" NOT NULL "id"
+    "retrain_requests_status_not_null" NOT NULL "status"
+    "retrain_requests_processed_at_not_null" NOT NULL "processed_at"
+    "retrain_requests_imported_at_not_null" NOT NULL "imported_at"
+    "retrain_requests_raw_not_null" NOT NULL "raw"
+Access method: heap
+
 ================================================================
 TABLE : public.site_repos
 ================================================================

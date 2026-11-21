@@ -56,6 +56,7 @@ flowchart LR
 │   ├── duck.log
 │   └── duck.sh
 ├── heartbeat_import.log
+├── importer.path
 ├── importer.service
 ├── importer.timer
 ├── import_runs.py
@@ -88,20 +89,36 @@ flowchart LR
 │   │       ├── monitoring.html
 │   │       ├── search.html
 │   │       └── sql.html
-│   ├── model_configs
-│   │   ├── bgem3.json
-│   │   ├── e5base.json
-│   │   ├── gemma.json
-│   │   ├── jinav3.json
-│   │   └── qwen3.json
 │   ├── python
 │   ├── README.md
-│   └── requirements.txt
+│   ├── requirements.txt
+│   └── smallbrain.service
 ├── tag_language.py
 ├── validation_archive
 │   └── validation_v1-2ecf814e.json
 └── venv-export
 ``` 
+
+### Espace d'échange
+Dossier partagé avec le cluster via SFTP (`/mnt/pgdata/export`, chroot de l'utilisateur `cluster`).
+```
+/mnt/pgdata/export
+├── configs
+│   └── reference            (configs de référence du cluster, lues par le site)
+├── data
+│   ├── manifest.json
+│   ├── manual_queries.json
+│   ├── repos_<date>.parquet
+│   ├── validation_set.json
+│   └── requests
+│       ├── retrain.json     (demande en attente)
+│       ├── datasets         (jeux de fine-tuning déposés depuis le site)
+│       └── history          (demandes traitées)
+├── heartbeat
+├── inbox
+├── processed
+└── quarantine
+```
 
 ## Cluster
 ### Fichiers
@@ -125,18 +142,22 @@ Cluster/
 │   │   ├── run_gemma_3792.log
 │   │   ├── run_qwen3_3782.log
 │   │   └── run_small-e5_3886.log
-│   └── model_configs
-│       ├── bge-m3.json
-│       ├── e5-base.json
-│       ├── e5-large-instruct.json
-│       ├── e5-small.json
-│       ├── embeddinggemma.json
-│       ├── granite-278m.json
-│       ├── gte-multilingual.json
-│       ├── jina-v3.json
-│       ├── nomic-v2-moe.json
-│       └── qwen3-embedding.json
+│   ├── model_configs
+│   │   ├── bge-m3.json
+│   │   ├── e5-base.json
+│   │   ├── e5-large-instruct.json
+│   │   ├── e5-small.json
+│   │   ├── embeddinggemma.json
+│   │   ├── granite-278m.json
+│   │   ├── gte-multilingual.json
+│   │   ├── jina-v3.json
+│   │   ├── nomic-v2-moe.json
+│   │   └── qwen3-embedding.json
+│   ├── model_configs_history
+│   └── requests
+│       └── <id de la demande>
 └── repos_pipeline
+    ├── daily_requests.py
     ├── eval_retrieval.py
     ├── install_models.py
     ├── model_config.json
@@ -182,6 +203,8 @@ Raid-etu/
 │   │   ├── special_tokens_map.json
 │   │   ├── tokenizer_config.json
 │   │   └── tokenizer.json
+│   ├── promoted
+│   │   └── <model_version>
 │   └── save
 │       └── 2026-W46
 │           ├── bge-m3-5617a9f6
