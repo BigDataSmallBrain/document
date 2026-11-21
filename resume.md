@@ -39,23 +39,25 @@ flowchart LR
 ```
 ---
 
-### <u>Architecture API:</u> [A mettre en place]
+### <u>Architecture API:</u> [En attente du serveur]
 
 **Système bi-conteneur:**
-- API
-- - Port Public 35000
-- - DuckDNS (register un domain et envoyer token a Mewen)
-- - 8 coeurs, 32Go RAM, GPU, 50Go (bien liberer les ressources hors stockage a la fin d'un appel API)
+- API (`api_retrieval`)
+- - Port public 35000
+- - 8 coeurs, 32Go RAM, GPU (Intel)
+- - Accès en lecture seule au dossier des modèles, et fonctionnement entièrement hors ligne.
+- - Ne tourne pas en root : elle accède au GPU via le groupe du serveur (`RENDER_GID`).
 
-- SSH
-- - Only key
-- - Rsync plutot que SCP
+- SSH (`ssh_models_receiver`)
+- - Conteneur fait par nos soins (Alpine, openssh, rsync) : l'image `dockette/ssh` prévue au départ n'était qu'un client SSH.
+- - Connexion uniquement par clé, sans mot de passe ni root.
+- - Aucun tunnel ni terminal : il ne sert qu'au dépôt des modèles via `rsync`.
+- - Publié uniquement sur l'adresse WireGuard du serveur, jamais sur Internet.
 
-Dossier en commun entre API et SSH pour le depot des models<br>
-Acces WireGuard pour parler avec uniquement avec le conteneur SSH.<br>
-- Cluster> SFTP > AWS > Wireguard(SSH) > SSH > Depot dans dossier communs
-Attention:
-- Faire attention à la configuration car Internet sera potentiellement bloqué.
+Dossier en commun entre API et SSH pour le dépôt des modèles.<br>
+Les deux images sont construites par GitHub Actions et publiées sur le GitHub Container Registry. Le serveur les récupère via Portainer.
+
+Il ne reste plus que la validation de Mewen pour le déploiement, ainsi que la route de recherche (`/search`) de l'API.
 ---
 ### <u> Sécurité </u>
 Une attention particulière à été prêter à la sécurité de cette architecture en respectant au mieux la règle suivante: <br>
@@ -65,12 +67,18 @@ Le cluster sait donc se connecter successivement a l'AWS et au raspberry avec de
 
 Lors de cette connexion SFTP, le cluster ne peut lire que dans `input` et déposer ses metrics et poids dans `output`, de ce fait, il ne peut pas acceder au reste des données du raspberry, ce qui rajoute un controle supplémentaire sur les accès.
 
-Un transfert des poids était également necessaire entre le Cluster et le Serveur API. [Inserer ici comment cela à été réaliser].
+Un transfert des poids était également necessaire entre le Cluster et le Serveur API. Il respecte la même règle, et passe lui aussi par le serveur AWS:
+- AWS se connecte au serveur via **WireGuard**. Le tunnel ne laisse passer que l'adresse du serveur, et le serveur ne peut pas ouvrir de connexion vers AWS.
+- Le cluster ne passe pas directement par WireGuard : il utilise le même utilisateur d'AWS que pour le raspberry (`jump`), dont la clé n'autorise que des redirections vers le raspberry et vers le conteneur SSH du serveur.
+
+Ainsi : Cluster > SSH > AWS > WireGuard > Conteneur SSH > Dossier des modèles.
 
 Enfin pour l'utilisation de l'API [Inserer ici comment cela à été réaliser].
 
 Le site Web, hébergé sur le raspberry pi, est quant à lui exposé sur Internet via **Tailscale Funnel**. Ainsi, aucun port n'est ouvert sur ma box personnelle et mon adresse IP n'est pas exposée, Tailscale se chargeant également du certificat HTTPS.<br>
 Le site n'écoute que localement (`127.0.0.1:8000`) et tourne en tant que service systemd durci (`smallbrain.service`) : il ne peut écrire que dans le dossier des demandes (`data/requests`), et redémarre automatiquement en cas d'erreur ou de redémarrage du raspberry.
+
+Les README affichés sur le site proviennent de repositories quelconques : ils sont donc nettoyés avant affichage, et tout ce qui pourrait exécuter du code est retiré (scripts, liens `javascript:`...).
 
 Les demandes de réentraînement déposées depuis le site respectent la même règle : c'est le cluster qui vient les récupérer, et il les considère comme non fiables. Il ne garde que ses propres valeurs pour le modèle (`model_name`, `revision`, `embedding_dim`, `trust_remote_code`), n'accepte que certains paramètres avec des bornes, et vérifie chaque chemin de sauvegarde. Ainsi, même si le site venait à être compromis, il ne pourrait pas faire exécuter n'importe quoi au cluster.
 
@@ -84,7 +92,7 @@ Nous avons une base de données PSQL `repos` sur le raspberry pour la conservati
 - model_evaluations : Contient les métriques hébdomadaire par runs et par models.
 - retrain_requests : Contient l'historique des demandes de réentrainement effectuées depuis le site.
 
-Ces bases de données sont alors sauvegardé tout les samedis à 0h00. <br>
+Ces bases de données sont alors sauvegardé tout les samedis à 0h00 (`backup.timer`). <br>
 Seuls les 3 dernières sauvegardes sont conservés, ce qui fait un historique de 3 semaines.
 
 ## Repos
@@ -153,6 +161,14 @@ Conserve l'historique des demandes de réentraînement déposées depuis le site
 | `processed_at` | `TIMESTAMPTZ` | `NOT NULL` | Date de la prise en charge par le cluster |
 | `imported_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | Date de l'import sur le raspberry |
 | `raw` | `JSONB` | `NOT NULL` | Accusé complet : runs lancés (`run_id`, job Slurm), erreurs et avertissements |
+
+<br>
+
+## Repo Chunks
+Contient les chunks des README et leurs embeddings, utilisés pour l'inférence.<br>
+Chaque run hebdomadaire dépose un index complet et neuf : la version des chunks contient la semaine de l'export (ex. `e5-small-614241f6-c1-2026-W47`). Un README modifié est donc pris en compte la semaine suivante, sans que l'importeur n'ait à modifier quoi que ce soit (il reste en Append-Only).
+
+Les anciens index sont supprimés chaque samedi à 5h00 (`purge_chunks.py`) : seules les 3 dernières semaines importées avec succès sont conservées pour chaque modèle, comme les sauvegardes des modèles. Tant qu'aucune semaine n'a été importée, rien n'est supprimé.
 
 <br>
 
@@ -231,14 +247,16 @@ La détection a donc été reprise sur le modèle du script `tag_language`, déj
 
 # Entrainement
 ### <u>Données </u>
-Sélections des repos ayant plus de X etoiles et X caractères dans ReadMe.<br>
-Les données qui (voir quels données sont séléctionner) sont déposer dans un espace prévu à cet effet tout les samedi à 3h00.
+Sélections des repos ayant au moins 1000 étoiles, dont le README est en anglais ou en français (et d'au moins 100 caractères, filtre déjà appliqué par le collecteur).<br>
+Ces données sont déposées dans un espace prévu à cet effet tout les samedi à 3h00 (`export.timer`). L'export contient également la distribution exacte de ce corpus, affichée sur la page Distribution du site.
 
-Le samedi à 6h00, le cluster se connecte sur le Raspberry PI, dans l'espace SFTP, afin de récuperer les données alors déposés pour faire son entrainement.
+Le dimanche à 0h00, le cluster se connecte sur le Raspberry PI, dans l'espace SFTP, afin de récuperer les données alors déposés pour faire son entrainement.
 
 ### <u>Entrainement</u>
-L'entrainement est alors inité tout les dimanches à 0h00 via un Cron. Il execute le fichier batch prévu à cet effet afin de pouvoir s'allouer un espace sur la node GPUE-07 avec 1 gpu, 8 cpu et 48G de ram. Le script est prévu de tourner 12h au maximum. L'entrainement est prévu de prendre environ 8h, afin de ne pas monopoliser le cluster, il a été decider de le faire tourner entre 0h00 et 12h.<br>
-L'entrainement s'effectue alors avec le même jeu de donnée sur tous les modèles de notre pool models. Une fois l'entrainement effecuté, nous calculons les métriques de nos modèles que nous redéposons sur le 
+L'entrainement est alors inité tout les dimanches à 0h00 via un Cron. Il execute le fichier batch prévu à cet effet afin de pouvoir s'allouer un espace sur la node GPUE-06 avec 1 gpu, 16 cpu et 48G de ram. Le script est prévu de tourner 12h au maximum. L'entrainement est prévu de prendre environ 8h, afin de ne pas monopoliser le cluster, il a été decider de le faire tourner entre 0h00 et 12h.<br>
+L'entrainement s'effectue alors avec le même jeu de donnée sur tous les modèles de notre pool models. Une fois l'entrainement effecuté, nous calculons les métriques de nos modèles que nous redéposons sur le raspberry pi.
+
+La base de données n'acceptant que des embeddings de 384 dimensions, seuls les chunks des modèles de cette dimension sont déposés. Les autres modèles passent automatiquement en run d'analyse : seules leurs métriques sont déposées.
 
 ### <u>Jeu de validation</u>
 Le jeu de validation se compose donc de pair requête-repos avec une information sur la pertinence :
@@ -251,7 +269,8 @@ Ces niveaux de pertinences permettent donc de pouvoir determiner quels repos con
 Les requêtes sont prelevés de requête type qui pourrait être utiliser par un utilisateur.
 
 ### <u>Evaluation</u>
-Les modèles sont donc evaluer à partir des métriques présenter ci-dessous. Les modèles les plus performants *(ceux qui nous fournissent les résultats les plus pertinents sur les 10 premiers retours)*, sont donc transferer sur le Serveur API afin de pouvoir les mettrent à disposition des utilisateurs.<br>
+Les modèles sont donc evaluer à partir des métriques présenter ci-dessous. Les 3 modèles les plus performants parmi les runs hebdomadaires *(ceux qui nous fournissent les résultats les plus pertinents sur les 10 premiers retours)*, sont donc transferer sur le Serveur API afin de pouvoir les mettrent à disposition des utilisateurs.<br>
+Les runs taggés (tests de configuration) ne font pas partie de ce classement : ils sont comparés à part au run hebdomadaire du même modèle.
 Les modèles, à l'image de la base de données, seront donc sauvegarder pendant 3 semaines, ce qui permet d'avoir un suivis de nos performances, mais également de pouvoir recharger un ancien modèle au besoin.<br>
 Tout les modèles sont conserver, ainsi, il sera parfaitement possible de mettre à disposition plus de modèles sans avoir à les entrainer de nouveaux.<br>
 Les metriques alors obtenues pour chaques modeles sont déposer sur le raspberry pi via SFTP, puis sont alimentés dans la base de données metrics pour avoir une historisation claire et propre de celles ci.
@@ -269,7 +288,7 @@ Pour chaque modèle, il est possible de choisir:
 - Le mode : fine-tuning, ou simple lancement avec de nouveaux hyperparamètres.
 - Le point de départ : le modèle de base, ou une sauvegarde des 3 dernières semaines.
 - Les hyperparamètres : epochs, batch, learning rate, nombre de tokens maximum...
-- Le tag du run : facultatif, il permet de retrouver plus facilement le run dans le Monitoring.
+- Le tag du run : facultatif, il permet de retrouver plus facilement le run dans le Monitoring. Les runs taggés sont comparés au run hebdomadaire du même modèle, et peuvent être testés depuis la page Recherche.
 - L'action : Test ou Load.
 
 Pour le fine-tuning, le jeu de données est directement déposé depuis le site (fichier JSONL).
@@ -288,19 +307,21 @@ Le site Web sert donc d'interface utilisateur de notre outils. Il offrira plusie
 - Consulter le Monitoring des Modeles pour voir nos performances
 - Avoir un Dashboard de notre systeme
 - Pouvoir envoyer une requete au modèle choisis et recevoir les 10 meilleurs repos concernant les topics
-- Consulter la base de données via requête SQL et consulter ainsi les ReadMe.
-- Avoir une visualisation de la distribution de nos données.
+- Consulter la base de données via requête SQL et consulter ainsi les ReadMe, affichés comme sur GitHub (mise en forme, images, liens).
+- Avoir une visualisation de la distribution de nos données : celle de toute la base, et celle exacte du corpus d'inférence.
 - Pouvoir effectuer un réentrainement de nos modèles (Admin).
 - Ajouter des modèles pour les inférences (Admin).
 
 ---
 ### <u>Model Switch</u>
-Il sera donc possible de pouvoir switch le modèle utiliser parmis les 3 meilleurs modèles de l'entrainement actuelle. Ces modèles seront déjà présent sur le Serveur API et seront mis à jour ou remplacer chaque semaine à la suite de l'entrainement, tout en s'assurant de la continuité de fonctionnement du service.
+Il sera donc possible de pouvoir switch le modèle utiliser parmis les 3 meilleurs modèles de l'entrainement actuelle. Ces modèles seront déjà présent sur le Serveur API et seront mis à jour ou remplacer chaque semaine à la suite de l'entrainement, tout en s'assurant de la continuité de fonctionnement du service.<br>
+Les runs taggés de la semaine sont également proposés, afin de pouvoir tester une configuration avant de l'adopter (Load).
 
 ---
 ### <u>Monitoring Models</u>
 Le but du monitoring des modèles est de pouvoir consulter rapidement les performances de nos modèles selon nos métriques.<br>
-Il est également possible de consulter la configuration exacte utilisée par chaque run, ainsi que le résultat d'un Load (configuration adoptée ou non).<br>
+Le classement ne prend en compte que les runs hebdomadaires (un par modèle). Les runs taggés sont affichés à part, avec leur écart par rapport au run hebdomadaire du même modèle et les paramètres modifiés, afin de déterminer si leur configuration est pertinente.<br>
+Il est également possible de consulter la configuration exacte utilisée par chaque run, ainsi que le résultat d'un Load (configuration adoptée ou non). Les résultats détaillés et l'historique des runs sont affichés par pages de 10 runs.<br>
 Le réentraînement des modèles se fait depuis la zone Admin.
 
 ---
@@ -313,12 +334,19 @@ Le Dashboard système permet de voir l'état actuel de notre système:
 - **Builds :** état du dernier build (CI) sur `main` de chaque repository. Le détail des commits n'est visible que par les administrateurs, les repositories étant privés.
 
 ---
+### <u>Tester le site en local</u>
+Le site peut être testé sur mon ordinateur avant d'être poussé sur GitHub (`site_local/local.sh run`).<br>
+Il utilise une copie réduite de la base du raspberry (1000 repos, ainsi que les runs, évaluations et accusés), avec les mêmes tables, rôles et droits, une API d'inférence simulée et un état fictif du collecteur.<br>
+Il lance le site présent dans le dossier `site`, sur la branche actuellement extraite : il suffit donc de changer de branche pour tester une autre version.
+
+---
 # CI/CD
 ### <u>Intégration continue (CI)</u>
 Chaque push ou Pull Request sur les branches `main` et `dev` des repositories site, Cluster, Raspberry et Collector déclenche une vérification automatique via GitHub Actions:
 - Recherche des erreurs dans le code Python (`ruff`) et dans les scripts shell (`shellcheck`).
 - Vérification des fichiers de services systemd, et des configurations des modèles pour le Cluster.
-- Tests automatiques (`pytest`), environ une centaine au total : formulaire Admin, validation des demandes par le cluster, Test et Load, nettoyage des poids, importeur, collecteur, déploiement...
+- Tests automatiques (`pytest`), un peu plus de 200 au total : formulaire Admin, rendu des README, validation des demandes par le cluster, Test et Load, métriques d'évaluation, importeur, collecteur, déploiement...
+- Vérification des valeurs partagées entre les repositories (bornes des hyperparamètres, dimension importable, format des tags) : un même fichier `contract.json` est présent dans site, Cluster et Raspberry, et la CI échoue si l'un d'eux change seul.
 
 Les tests du Cluster n'ont pas besoin de GPU : les librairies de calcul sont simulées, seule la logique est vérifiée.
 
@@ -329,15 +357,20 @@ Afin de respecter la règle de sécurité du projet, ce n'est pas GitHub qui se 
 Pour chaque repository (site, Raspberry, Collector), le déploiement ne se fait que si:
 - Un nouveau commit est présent sur `main`.
 - La CI de ce commit est validée.
-- Aucune modification n'a été faite directement sur le raspberry.
+- Aucune modification n'a été faite directement sur le raspberry (une modification déjà identique à la nouvelle version, comme un fichier supprimé à la main que le commit supprime aussi, ne bloque pas).
 
-Il applique ensuite ce qui a changé (dépendances, services, importeur...) et redémarre les services concernés. Pour le site, si celui-ci ne répond plus après la mise à jour, le raspberry revient automatiquement à la version précédente.<br>
-Les migrations de la base de données ne sont jamais lancées automatiquement, elles sont seulement signalées.<br>
+Il applique ensuite ce qui a changé (dépendances, services, importeur...) et redémarre les services concernés, uniquement si des fichiers qu'ils utilisent ont changé (une modification de la documentation ou des tests ne redémarre rien). Pour le site, si celui-ci ne répond plus après la mise à jour, le raspberry revient automatiquement à la version précédente.<br>
+Les migrations de la base de données ne sont jamais lancées automatiquement, et une nouvelle tâche planifiée n'est jamais activée automatiquement : elles sont seulement signalées.<br>
 Une notification est envoyée sur mon téléphone via `ntfy` à chaque déploiement ou échec.
 
 Le Cluster n'a quant à lui pas de déploiement automatique, puisque rien ne doit se connecter à lui : il est mis à jour manuellement depuis le cluster (`git pull`).
 
 Toutes les modifications se font donc sur la branche `dev`, puis passent sur `main` via une Pull Request, et ne sont jamais faites directement sur le raspberry.
+
+---
+### <u>Tâches planifiées</u>
+Toutes les tâches planifiées du raspberry sont des timers systemd versionnés dans le repository Raspberry : sauvegarde, export, purge des chunks, import des résultats et du signal de vie du cluster, DuckDNS, déploiement et rapport des connexions.<br>
+Le raspberry peut ainsi être reconstruit entièrement à partir des repositories.
 
 ---
 # Models
@@ -506,7 +539,7 @@ Il a donc été necessaire de répartir ces différentes tâches dans différent
 - Raspberry : Site + Scrapping (peu couteux en RAM).
 - Cluster : Entrainement (Présence de puissant GPU et d'une forte capacité de calcul)
 - Serveur Tiers : Inférence lors du Retrival (Puissance de calcul moyenne)
-- AWS : Il ne sert que de pont de connexion entre le Cluster et le raspberry, car ne souhaitant pas exposé le port 22 de ma box personelle, et le Cluster ayant une plage de diffusion réduite.
+- AWS : Il ne sert que de pont de connexion entre le Cluster et le raspberry, ainsi qu'entre le Cluster et le serveur d'API, car ne souhaitant pas exposé le port 22 de ma box personelle, et le Cluster ayant une plage de diffusion réduite.
 
 Ainsi, les différentes tâches seraient traités par différents systèmes aux capacités différentes.
 
@@ -526,9 +559,10 @@ Voici une liste des points à améliorer que j'ai relevé durant mon projet:
 - Manque de redondance des données : Toutes les données sont présentes uniquement sur le raspberry, si il casse, je perds tout.
 - Simplifié l'architecture : Cela se réfère également au premier point, mais bien que cela puisse être interessant d'avoir une architecture complexe pour un projet universitaire, dans un cadre pratique réel, on va préféré la simplicité.
 - Le jeu de donnée de validation a été réaliser par moi même, il pourrait être pertinent de recevoir l'avis de plusieurs annotateurs pour eviter les biais.
-- L'import des chunks en base n'est possible que pour les modèles de 384 dimensions (`repo_chunks` en `halfvec(384)`).
+- L'import des chunks en base n'est possible que pour les modèles de 384 dimensions (`repo_chunks` en `halfvec(384)`) : les autres modèles ne sont évalués qu'en run d'analyse.
 - La page de requêtes SQL du site est publique : les requêtes sont en lecture seule et limitées à 5 secondes, mais leur nombre n'est pas limité.
 - Le Cluster n'a pas de déploiement automatique : sa mise à jour reste manuelle.
+- Le script réellement utilisé pour le rapport des connexions (`/usr/local/bin/auth_report.sh`) n'est pas encore versionné.
 - Les modifications des fichiers de configuration `.env` (non versionnés car ils contiennent des secrets) nécessitent un redémarrage manuel du service concerné.
 
 En définitive, les principaux points à améliorer sont inhérent aux choix de conceptions de l'architecture qui ont été fait.

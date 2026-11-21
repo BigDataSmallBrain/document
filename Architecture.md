@@ -41,16 +41,15 @@ Chaque push sur `main` ou `dev` déclenche la CI du repository (`.github/workflo
 ### Fichiers
 ```
 .
-├── annotation_2026-W46-pool2.html
-├── backup.log
 ├── bin
-│   ├── auth_report.sh
-│   ├── backup_repos.sh
-│   ├── deploy_pull.py
-│   ├── export_repos.py
-│   ├── heartbeat_import.py
-│   ├── make_annotation_sheet.py
-│   └── make_validation_set.py
+│   ├── auth_report.sh
+│   ├── backup_repos.sh
+│   ├── deploy_pull.py
+│   ├── export_repos.py
+│   ├── heartbeat_import.py
+│   ├── make_annotation_sheet.py
+│   ├── make_validation_set.py
+│   └── purge_chunks.py
 ├── Collector
 │   ├── collector.py
 │   ├── collector.service
@@ -59,54 +58,29 @@ Chaque push sur `main` ou `dev` déclenche la CI du repository (`.github/workflo
 │       ├── state.json      (reprise de la collecte)
 │       └── status.json     (état affiché sur la page Système)
 ├── data
-│   ├── judgments_9adf8ed7c8cc.json
-│   └── manual_queries_v1.json
-├── deploy.service
-├── deploy.timer
+│   ├── judgments_9adf8ed7c8cc.json
+│   └── manual_queries_v1.json
 ├── duckdns
-│   ├── duck.log
-│   └── duck.sh
-├── heartbeat_import.log
-├── importer.path
-├── importer.service
-├── importer.timer
+│   └── duck.sh             (hors repository, contient le jeton)
 ├── import_runs.py
 ├── inspect_db.sh
-├── make_annotation_sheet.py
-├── manual_queries_v1.json
-├── metrics_2026-W46-gemma.json
-├── migrate_model_version.sql
-├── output
-│   └── pipeline_runs
-├── setup_importer.sql
+├── *.service / *.timer / *.path  (tâches planifiées)
+├── setup_importer.sql, setup_retrain.sql
+├── migrate_*.sql, fix_failed_runs_available.sql
 ├── smallbrain
-│   ├── app
-│   │   ├── __init__.py
-│   │   ├── main.py
-│   │   ├── __pycache__
-│   │   │   ├── __init__.cpython-313.pyc
-│   │   │   └── main.cpython-313.pyc
-│   │   ├── static
-│   │   │   ├── app.js
-│   │   │   ├── style.css
-│   │   │   └── vendor
-│   │   │       └── chart.umd.js
-│   │   └── templates
-│   │       ├── admin.html
-│   │       ├── base.html
-│   │       ├── dashboard.html
-│   │       ├── data.html
-│   │       ├── login.html
-│   │       ├── monitoring.html
-│   │       ├── search.html
-│   │       └── sql.html
-│   ├── python
-│   ├── README.md
-│   ├── requirements.txt
-│   └── smallbrain.service
+│   ├── app
+│   │   ├── main.py            (assemble les pages)
+│   │   ├── auth.py, search.py, explore.py, distribution.py
+│   │   ├── dashboard.py, monitoring.py, admin.py
+│   │   ├── db.py, templating.py, model_configs.py, readme_render.py
+│   │   ├── static
+│   │   └── templates
+│   ├── model_configs
+│   ├── requirements.txt
+│   └── smallbrain.service
 ├── tests
 ├── validation_archive
-│   └── validation_v1-2ecf814e.json
+│   └── validation_v1-2ecf814e.json
 └── venv-export
 ``` 
 
@@ -143,32 +117,9 @@ Cluster/
 .
 ├── heartbeat.sh
 ├── output
-│   ├── log
-│   │   ├── run_all_2026-W46_3865.log
-│   │   ├── run_all_3778.log
-│   │   ├── run_base-e5_3889.log
-│   │   ├── run_base-e5_3932.log
-│   │   ├── run_base-e5_3951.log
-│   │   ├── run_e5-base_3862.log
-│   │   ├── run_e5-base_3863.log
-│   │   ├── run_e5-base_3864.log
-│   │   ├── run_e5-small_3883.log
-│   │   ├── run_e5-small_3884.log
-│   │   ├── run_e5-small_3885.log
-│   │   ├── run_gemma_3792.log
-│   │   ├── run_qwen3_3782.log
-│   │   └── run_small-e5_3886.log
-│   ├── model_configs
-│   │   ├── bge-m3.json
-│   │   ├── e5-base.json
-│   │   ├── e5-large-instruct.json
-│   │   ├── e5-small.json
-│   │   ├── embeddinggemma.json
-│   │   ├── granite-278m.json
-│   │   ├── gte-multilingual.json
-│   │   ├── jina-v3.json
-│   │   ├── nomic-v2-moe.json
-│   │   └── qwen3-embedding.json
+│   ├── log                    (logs des jobs, non versionnés)
+│   ├── model_configs
+│   │   └── <10 configurations>.json
 │   ├── model_configs_history
 │   └── requests
 │       └── <id de la demande>
@@ -176,9 +127,7 @@ Cluster/
 │   ├── daily_requests.py
 │   ├── eval_retrieval.py
 │   ├── install_models.py
-│   ├── model_config.json
-│   ├── __pycache__
-│   │   └── eval_retrieval.cpython-312.pyc
+│   ├── pi_link.py
 │   ├── run_pipeline.py
 │   ├── submit_models.sh
 │   └── weekly_run.sh
@@ -242,3 +191,27 @@ Raid-etu/
             └── out
 ```
 ## Docker API
+### Fichiers
+Server/
+```
+.
+├── main.py                (API FastAPI)
+├── Dockerfile             (image de l'API)
+├── docker-compose.yml     (conteneurs API et SSH, volume et réseau communs)
+├── .env.example           (variables du serveur)
+├── ssh
+│   ├── Dockerfile         (image du serveur SSH)
+│   ├── sshd_config
+│   └── entrypoint.sh
+└── aws
+    └── setup_bridge.sh    (pont WireGuard du serveur AWS)
+```
+
+## AWS
+Ne sert plus que de pont : l'ancienne base PostgreSQL, l'ancien collecteur et les anciens comptes de transfert ont été supprimés.
+- `jump` : utilisateur du cluster, sa clé n'autorise que des redirections vers le raspberry et le conteneur SSH du serveur.
+- `~/bridge/setup_bridge.sh` et `/etc/wireguard` : tunnel WireGuard vers le serveur d'API.
+
+## Ordinateur (développement)
+- `site_local/` : environnement pour tester le site en local (base réduite, API simulée).
+- `github_push` : état, commit et push de tous les repositories.

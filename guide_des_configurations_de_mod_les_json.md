@@ -96,7 +96,7 @@ qui pointe vers `~/raid-etu/models/promoted/<promoted_model>`, dossier hors de l
 | :--- | :--- | :--- |
 | `model_name` | `string` | Identifiant HuggingFace du modèle (ex: `"BAAI/bge-m3"`, `"intfloat/multilingual-e5-base"`). |
 | `revision` | `string` | Hash exact du commit HuggingFace présent dans le cache local du cluster. |
-| `model_version` | `string` | Nom unique identifiant cette version du modèle (utilisé pour l'indexation et le dossier de sauvegarde). |
+| `model_version` | `string` | Nom unique identifiant cette version du modèle (dossier de sauvegarde). Les chunks déposés portent en plus la version de découpage et la semaine de l'export (ex. `e5-small-614241f6-c1-2026-W47`). |
 | `chunking_version` | `string` | Version de la stratégie de découpage (ex: `"c1"`). |
 | `embedding_dim` | `int` | Dimension des vecteurs de sortie (ex: `384`, `768`, `1024`). |
 | `passage_prefix` | `string` | Préfixe ajouté devant chaque chunk/passage (`"passage: "` pour E5, `""` pour BGE-M3 et GTE). |
@@ -145,3 +145,5 @@ Les préfixes (`query_prefix`, `passage_prefix`) ne sont pas modifiables depuis 
    Les préfixes `query_prefix` et `passage_prefix` de la configuration sont automatiquement appliqués respectivement aux champs `anchor` et `positive` lors du chargement.
 3. **Traçabilité automatique :**  
    À chaque sauvegarde, le fichier exact de configuration utilisé est enregistré dans `run_model_config.json` à l'intérieur du dossier du modèle sur le cluster, ainsi que dans `saved_models.json` et `metrics_<run_id>.json` dans `/mnt/pgdata/export/inbox/` sur le Raspberry Pi.
+
+Les configurations de référence sont générées par `install_models.py`. Une configuration déjà présente n'est jamais écrasée, car elle a pu être adoptée par un Load : il faut ajouter `--force` pour la remplacer, et l'ancienne est alors archivée dans `model_configs_history`.

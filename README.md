@@ -9,7 +9,7 @@ Repository des documents du projet SmallBrain : un outil de Retrieval basé sur 
 ---
 # Documents
 - <u>**resume.md :**</u> Le document principal du projet : objectif, architecture, sécurité, base de données, scrapping, entrainement, interface utilisateur, CI/CD, modèles, métriques, difficultés et points à améliorer.
-- <u>**Architecture.md :**</u> Organisation des repositories, branches, et arborescence des fichiers de chaque système (raspberry, cluster).
+- <u>**Architecture.md :**</u> Organisation des repositories, branches, et arborescence des fichiers de chaque système (raspberry, cluster, serveur d'API, AWS, ordinateur de développement).
 - <u>**Database.txt :**</u> Description détaillée des tables PostgreSQL, générée sur le raspberry avec `inspect_db.sh`.
 - <u>**guide_des_configurations_de_mod_les_json.md :**</u> Format des fichiers de configuration des modèles (inférence, fine-tuning, Test et Load).
 
