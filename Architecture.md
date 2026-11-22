@@ -64,7 +64,7 @@ Chaque push sur `main` ou `dev` déclenche la CI du repository (`.github/workflo
 │   └── duck.sh             (hors repository, contient le jeton)
 ├── import_runs.py
 ├── inspect_db.sh
-├── *.service / *.timer / *.path  (tâches planifiées)
+├── systemd                  (tâches planifiées : *.service, *.timer, *.path)
 ├── setup_importer.sql, setup_retrain.sql
 ├── migrate_*.sql, fix_failed_runs_available.sql
 ├── smallbrain
