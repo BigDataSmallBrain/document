@@ -60,8 +60,6 @@ Chaque push sur `main` ou `dev` déclenche la CI du repository (`.github/workflo
 ├── data
 │   ├── judgments_9adf8ed7c8cc.json
 │   └── manual_queries_v1.json
-├── duckdns
-│   └── duck.sh             (hors repository, contient le jeton)
 ├── import_runs.py
 ├── inspect_db.sh
 ├── systemd                  (tâches planifiées : *.service, *.timer, *.path)

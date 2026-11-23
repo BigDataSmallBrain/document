@@ -107,6 +107,7 @@ qui pointe vers `~/raid-etu/models/promoted/<promoted_model>`, dossier hors de l
 | `dtype` | `string` | Précision d'inférence (`"float16"` ou `"float32"`). |
 | `batch_size` | `int` | Taille des lots GPU lors de l'encodage (ex: `256`). |
 | `default_tag` | `string` | Suffixe ajouté au `run_id` (**12 caractères alphanumériques maximum**, sans tirets ni underscores). |
+| `enabled` | `bool` *(opt.)* | `false` : modèle désactivé depuis l'Admin, ni lancé par le run hebdomadaire, ni accepté au réentraînement. Absent : modèle actif. |
 
 ### Paramètres spécifiques au fine-tuning
 

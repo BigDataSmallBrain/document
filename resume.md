@@ -76,11 +76,14 @@ Ainsi : Cluster > SSH > AWS > WireGuard > Conteneur SSH > Dossier des modèles.
 Enfin pour l'utilisation de l'API [Inserer ici comment cela à été réaliser].
 
 Le site Web, hébergé sur le raspberry pi, est quant à lui exposé sur Internet via **Tailscale Funnel**. Ainsi, aucun port n'est ouvert sur ma box personnelle et mon adresse IP n'est pas exposée, Tailscale se chargeant également du certificat HTTPS.<br>
-Le site n'écoute que localement (`127.0.0.1:8000`) et tourne en tant que service systemd durci (`smallbrain.service`) : il ne peut écrire que dans le dossier des demandes (`data/requests`), et redémarre automatiquement en cas d'erreur ou de redémarrage du raspberry.
+Le site n'écoute que localement (`127.0.0.1:8000`) et tourne en tant que service systemd durci (`smallbrain.service`) : il ne peut écrire que dans le dossier des demandes (`data/requests`), et redémarre automatiquement en cas d'erreur ou de redémarrage du raspberry.<br>
+Il limite chaque visiteur à 120 requêtes par minute (30 pour la Recherche et les README), et aucun script n'est écrit dans ses pages : la Content-Security-Policy interdit tout JavaScript intégré. La connexion à l'Admin bloque une adresse après 5 échecs, pour une durée qui double à chaque récidive (jusqu'à 24 h). Les mots de passe sont hachés avec PBKDF2 (600 000 itérations), et une session déconnectée est révoquée. La page de requêtes SQL est limitée à 10 secondes par requête, 10 requêtes par minute et par visiteur, 2 requêtes en même temps et 256 Mo de fichiers temporaires.
+
+Le déploiement continu du raspberry tourne en root : pour qu'un service compromis ne puisse pas s'en servir pour devenir root, il ne lance qu'une copie du script appartenant à root, et n'installe que des fichiers lus dans les objets git du commit dont GitHub confirme qu'il est la tête de `main` avec une CI verte.
 
 Les README affichés sur le site proviennent de repositories quelconques : ils sont donc nettoyés avant affichage, et tout ce qui pourrait exécuter du code est retiré (scripts, liens `javascript:`...).
 
-Les demandes de réentraînement déposées depuis le site respectent la même règle : c'est le cluster qui vient les récupérer, et il les considère comme non fiables. Il ne garde que ses propres valeurs pour le modèle (`model_name`, `revision`, `embedding_dim`, `trust_remote_code`), n'accepte que certains paramètres avec des bornes, et vérifie chaque chemin de sauvegarde. Ainsi, même si le site venait à être compromis, il ne pourrait pas faire exécuter n'importe quoi au cluster.
+Les demandes de réentraînement déposées depuis le site respectent la même règle : c'est le cluster qui vient les récupérer, et il les considère comme non fiables. Il ne garde que ses propres valeurs pour le modèle (`model_name`, `revision`, `embedding_dim`, `trust_remote_code`), n'accepte que certains paramètres avec des bornes, et vérifie chaque chemin de sauvegarde. Ainsi, même si le site venait à être compromis, il ne pourrait pas faire exécuter n'importe quoi au cluster. De même, le manifest de l'export est vérifié avant que ses noms de fichiers servent dans un chemin ou une commande SFTP, et aucune commande SFTP ne peut contenir de saut de ligne : même un raspberry compromis ne pourrait pas lancer de commande sur le cluster.
 
 Pour vérifier l'état de la CI, le raspberry utilise un jeton GitHub en lecture seule, limité à la consultation des GitHub Actions. Il est stocké dans un fichier uniquement lisible par root (`/etc/smallbrain-deploy.env`).<br>
 Seuls les commits de `main` dont la CI est validée sont déployés.
@@ -291,6 +294,12 @@ Pour chaque modèle, il est possible de choisir:
 - Le tag du run : facultatif, il permet de retrouver plus facilement le run dans le Monitoring. Les runs taggés sont comparés au run hebdomadaire du même modèle, et peuvent être testés depuis la page Recherche.
 - L'action : Test ou Load.
 
+### <u>Gestion des modèles</u>
+La zone Admin permet aussi de gérer les modèles du cluster. Ces demandes sont appliquées par le cluster au même passage de 00h00 :
+- **Importer** un modèle depuis Hugging Face (dépôt, nom court, tag, précision et préfixes). Un job Slurm sur la node GPU le télécharge, vérifie ses vecteurs hors ligne, puis l'ajoute au run hebdomadaire. Pour la sécurité, un modèle qui exige `trust_remote_code` est refusé, et seuls les poids au format `safetensors` sont téléchargés (jamais de pickle, qui exécute du code au chargement).
+- **Désactiver** un modèle : il n'est plus lancé par le run hebdomadaire ni proposé au réentraînement, mais sa configuration et ses poids sont conservés. Il peut être réactivé.
+- **Supprimer** un modèle : sa configuration est archivée sur le cluster et retirée du run hebdomadaire.
+
 Pour le fine-tuning, le jeu de données est directement déposé depuis le site (fichier JSONL).
 
 ### <u>Test et Load</u>
@@ -369,7 +378,7 @@ Toutes les modifications se font donc sur la branche `dev`, puis passent sur `ma
 
 ---
 ### <u>Tâches planifiées</u>
-Toutes les tâches planifiées du raspberry sont des timers systemd versionnés dans le repository Raspberry : sauvegarde, export, purge des chunks, import des résultats et du signal de vie du cluster, DuckDNS, déploiement et rapport des connexions.<br>
+Toutes les tâches planifiées du raspberry sont des timers systemd versionnés dans le repository Raspberry : sauvegarde, export, purge des chunks, import des résultats et du signal de vie du cluster, déploiement et rapport des connexions.<br>
 Le raspberry peut ainsi être reconstruit entièrement à partir des repositories.
 
 ---
@@ -560,7 +569,7 @@ Voici une liste des points à améliorer que j'ai relevé durant mon projet:
 - Simplifié l'architecture : Cela se réfère également au premier point, mais bien que cela puisse être interessant d'avoir une architecture complexe pour un projet universitaire, dans un cadre pratique réel, on va préféré la simplicité.
 - Le jeu de donnée de validation a été réaliser par moi même, il pourrait être pertinent de recevoir l'avis de plusieurs annotateurs pour eviter les biais.
 - L'import des chunks en base n'est possible que pour les modèles de 384 dimensions (`repo_chunks` en `halfvec(384)`) : les autres modèles ne sont évalués qu'en run d'analyse.
-- La page de requêtes SQL du site est publique : les requêtes sont en lecture seule et limitées à 5 secondes, mais leur nombre n'est pas limité.
+- La page de requêtes SQL du site est publique : même limitées (lecture seule, 10 secondes, 10 par minute et par visiteur), elles restent une porte ouverte sur la base.
 - Le Cluster n'a pas de déploiement automatique : sa mise à jour reste manuelle.
 - Le script réellement utilisé pour le rapport des connexions (`/usr/local/bin/auth_report.sh`) n'est pas encore versionné.
 - Les modifications des fichiers de configuration `.env` (non versionnés car ils contiennent des secrets) nécessitent un redémarrage manuel du service concerné.
